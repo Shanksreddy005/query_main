@@ -74,7 +74,7 @@ function containsBannedBoilerplate(text: string): boolean {
 /**
  * Formats numeric values nicely with appropriate prefixes/suffixes based on column name and value.
  */
-export function formatMetricValue(val: any, colName: string = ''): string {
+export function formatMetricValue(val: any, colName: string = '', currencySources?: Map<string, string>): string {
   if (val === null || val === undefined || val === '') return 'N/A';
   if (typeof val === 'boolean') return val ? 'Yes' : 'No';
   const num = typeof val === 'number' ? val : Number(val);
@@ -105,7 +105,8 @@ export function formatMetricValue(val: any, colName: string = ''): string {
     lowerCol.includes('revenue') ||
     lowerCol.includes('price') ||
     lowerCol.includes('cost') ||
-    lowerCol.includes('spend');
+    lowerCol.includes('spend') ||
+    currencySources?.has(colName) === true;
 
   if (isCurrency) {
     const isNeg = num < 0;
@@ -212,6 +213,136 @@ interface ColumnProfile {
   rankCol?: string;
   shareCol?: string;
   numericCols: string[];
+  currencySources?: Map<string, string>;
+}
+
+const MONEY_COLUMN_PATTERN = /(mrr|arr|revenue|sales|price|amount|cost|spend|profit|fee|fare|gmv)/i;
+const PERCENTISH_COLUMN_PATTERN = /(pct|percent|ratio|share|rate)/i;
+const MONEY_AGGREGATE = /^(sum|avg|average|min|max|total)\s*\(/i;
+const PLAIN_COLUMN_REF = /^[A-Za-z_][\w$]*(\.[A-Za-z_][\w$]*)?$/;
+
+/**
+ * Splits a SELECT list on top-level commas so an expression such as
+ * ROUND(SUM(mrr_usd), 2) AS total_mrr stays in one piece.
+ */
+export function parseSelectExpressions(sql: string): { expr: string; alias: string | null }[] {
+  const text = String(sql || '');
+  const results: { expr: string; alias: string | null }[] = [];
+  let cursor = 0;
+  // A CTE or subquery can hide the aggregate the outer query re-selects, so every
+  // SELECT projection is parsed, not only the first one.
+  while (cursor < text.length) {
+    const selectIdx = text.toLowerCase().indexOf('select', cursor);
+    if (selectIdx < 0) break;
+    const next = parseOneProjection(text, selectIdx);
+    if (!next) break;
+    results.push(...next.items);
+    cursor = Math.max(next.end, selectIdx + 7);
+  }
+  return results;
+}
+
+function parseOneProjection(text: string, selectIdx: number): { items: { expr: string; alias: string | null }[]; end: number } | null {
+  let i = selectIdx + 'select'.length;
+  if (text.slice(i, i + 12).trimStart().toLowerCase().startsWith('distinct')) {
+    i = text.toLowerCase().indexOf('distinct', i) + 'distinct'.length;
+  }
+
+  // The projection ends at the first FROM outside quotes and parentheses.
+  let depth = 0;
+  let quote: string | null = null;
+  const projectionStart = i;
+  for (; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '\'' || ch === '"') { quote = ch; continue; }
+    if (ch === '(') depth++;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    else if (depth === 0 && text.slice(i, i + 4).toLowerCase() === 'from' && (i === 0 || /[\s,)]/.test(text[i - 1])) && !/[\w$]/.test(text[i + 4] || ' ')) break;
+  }
+  const projection = text.slice(projectionStart, i);
+
+  const items: string[] = [];
+  let level = 0;
+  let q: string | null = null;
+  let current = '';
+  for (const ch of projection) {
+    if (q) {
+      if (ch === q) q = null;
+      current += ch;
+      continue;
+    }
+    if (ch === '\'' || ch === '"') { q = ch; current += ch; continue; }
+    if (ch === '(') level++;
+    if (ch === ')') level = Math.max(0, level - 1);
+    if (level === 0 && ch === ',') { items.push(current); current = ''; continue; }
+    current += ch;
+  }
+  if (current.trim()) items.push(current);
+
+  const parsed = items
+    .map((raw) => {
+      const item = raw.trim();
+      if (!item) return null;
+      const asIdx = item.toLowerCase().lastIndexOf(' as ');
+      if (asIdx > 0) {
+        const expr = item.slice(0, asIdx).trim();
+        const alias = item.slice(asIdx + 4).trim().replace(/^["`]|["`]$/g, '');
+        if (/^[A-Za-z_][\w$]*$/.test(alias)) return { expr, alias };
+      }
+      const tail = item.match(/^([\s\S]+)\s+("([^"]+)"|([A-Za-z_][\w$]*))$/);
+      if (tail && /\)\s*$/.test(tail[1])) {
+        return { expr: tail[1].trim(), alias: tail[3] || tail[4] };
+      }
+      return { expr: item, alias: null };
+    })
+    .filter((item): item is { expr: string; alias: string | null } => item !== null);
+  return { items: parsed, end: i };
+}
+
+/**
+ * Maps each output column to the currency column it aggregates, when the SQL and the
+ * dataset schema make that unambiguous. This keeps alias choice ("plan_total") from
+ * deciding whether a sum of mrr_usd is displayed as money or treated as a count.
+ */
+function selectCurrencySources(sql: string, columns: string[], semanticSchema?: SemanticSchema): Map<string, string> {
+  const sources = new Map<string, string>();
+  const schemaNames: string[] = (semanticSchema?.columns || []).map((c) => c.name);
+  if (!schemaNames.length) return sources;
+  const moneyColumns = schemaNames.filter((n) => MONEY_COLUMN_PATTERN.test(n));
+  if (!moneyColumns.length) return sources;
+
+  const listed = parseSelectExpressions(sql);
+  if (!listed.length) return sources;
+  const measureNames = columns.filter((c) => !PERCENTISH_COLUMN_PATTERN.test(c));
+  const moneyByLower = new Map(moneyColumns.map((name) => [name.toLowerCase(), name]));
+
+  for (const { expr, alias } of listed) {
+    const text = String(expr).trim();
+    // Only a monetary aggregate or a bare money column carries a currency; COUNT(mrr_usd)
+    // or an arithmetic ratio built from money columns does not.
+    if (!MONEY_AGGREGATE.test(text) && !PLAIN_COLUMN_REF.test(text)) continue;
+    // The first identifier is the function name ("SUM"), so scan every identifier.
+    const identifiers = text.match(/[A-Za-z_][\w$]*/g) || [];
+    const measure = identifiers
+      .map((id) => moneyByLower.get(id.toLowerCase()))
+      .find((name): name is string => Boolean(name));
+    if (!measure) continue;
+
+    const targets = new Set<string>();
+    if (alias) targets.add(alias);
+    const nameHit = measureNames.find((c) => c.toLowerCase().includes(measure.toLowerCase()));
+    if (nameHit) targets.add(nameHit);
+    targets.forEach((target) => sources.set(target, measure));
+  }
+  // An aggregate aliased exactly like its source column, e.g. SUM(mrr_usd) AS mrr_usd.
+  for (const column of columns) {
+    if (!sources.has(column) && moneyColumns.includes(column)) sources.set(column, column);
+  }
+  return sources;
 }
 
 function profileColumns(columns: string[], rows: Record<string, any>[]): ColumnProfile {
@@ -821,6 +952,10 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
 
   // Profile columns
   const profile = profileColumns(columns, rows);
+  profile.currencySources = selectCurrencySources(sql, columns, semanticSchema);
+  // An alias the provider chose ("plan_total") must not decide whether a sum of mrr_usd
+  // reads as money, so every formatted value in the narrative consults the SQL mapping.
+  const fmtValue = (value: any, column: string) => formatMetricValue(value, column, profile.currencySources);
 
   let overview = '';
   const key_findings: KeyFinding[] = [];
@@ -915,6 +1050,30 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
       }
     }
 
+    // A "<qualifier>_<x>" column next to "total_<x>" in the same row is a subset of that total,
+    // so its share is a fact of the returned row and needs no extra query.
+    const shareSentences: string[] = [];
+    for (const totalCol of measures.filter((c) => /^(total|overall|all)_/i.test(c))) {
+      const suffix = totalCol.replace(/^(total|overall|all)_/i, '').toLowerCase();
+      const totalVal = Number(rows[0][totalCol]);
+      if (!suffix || !Number.isFinite(totalVal) || totalVal <= 0) continue;
+      for (const partCol of measures) {
+        if (partCol === totalCol || /^(total|overall|all)_/i.test(partCol)) continue;
+        const m = partCol.toLowerCase().match(/^([a-z][a-z0-9]*(?:_[a-z0-9]+)*?)_(.+)$/);
+        if (!m || m[2] !== suffix || /^(avg|average|mean|median|min|max|pct|percent|share|rate|ratio|std|stddev|var)$/.test(m[1])) continue;
+        const partVal = Number(rows[0][partCol]);
+        if (!Number.isFinite(partVal) || partVal < 0 || partVal > totalVal) continue;
+        const pct = ((partVal / totalVal) * 100).toFixed(1);
+        const sentence = `${partCol.replace(/_/g, ' ')} (${formatMetricValue(partVal, partCol)}) ${partVal === 1 ? 'is' : 'are'} ${pct}% of ${totalCol.replace(/_/g, ' ')} (${formatMetricValue(totalVal, totalCol)})`;
+        shareSentences.push(sentence);
+        kpiFindings.push({
+          finding: `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`,
+          evidence: `${partCol} / ${totalCol} = ${partVal} / ${totalVal}`,
+          importance: 'high',
+        });
+      }
+    }
+
     if (aux?.overallCount !== undefined && aux?.filteredCount !== undefined) {
       kpiLimitations.push('Figures describe the cohort the query selected, not the full dataset.');
     } else {
@@ -924,7 +1083,7 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
     return buildLegacyPayload({
       status: 'verified',
       category: 'multi_metric',
-      overview: `The query returns one summary row: ${readable}.`,
+      overview: `The query returns one summary row: ${readable}.${shareSentences.length ? ` ${shareSentences.map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join('; ')}.` : ''}`,
       key_findings: kpiFindings,
       performance_comparison: [],
       anomalies: detectEvidenceAnomalies(rows, columns, 'multi_metric'),
@@ -1092,7 +1251,7 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
     const hasMultipleMetrics = profile.numericCols.length >= 2;
 
     // Check if we have revenue metrics and count metrics
-    const revCol = profile.totalRevenueCol || profile.activeRevenueCol || profile.avgRevenueCol || profile.numericCols.find((c) => c.toLowerCase().includes('mrr') || c.toLowerCase().includes('sales'));
+    const revCol = profile.totalRevenueCol || profile.activeRevenueCol || profile.avgRevenueCol || profile.numericCols.find((c) => profile.currencySources?.has(c) && c !== profile.shareCol && c !== profile.activeRateCol) || profile.numericCols.find((c) => c.toLowerCase().includes('mrr') || c.toLowerCase().includes('sales'));
     const avgCol = profile.avgRevenueCol || (profile.totalRevenueCol && profile.totalCountCol ? null : null);
     const countCol = profile.totalCountCol || profile.activeCountCol || profile.numericCols.find((c) => c.toLowerCase().includes('count') || c.toLowerCase().includes('customer'));
     const rateCol = profile.activeRateCol || profile.numericCols.find((c) => c !== profile.shareCol && (c.toLowerCase().includes('pct') || c.toLowerCase().includes('percent') || c.toLowerCase().includes('rate')));
@@ -1146,9 +1305,9 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
       // EXECUTIVE OVERVIEW SYNTHESIS
       // =====================================================================
       const topRevName = groupLabel(topRevRow);
-      const topRevVal = revCol ? formatMetricValue(topRevRow[revCol], revCol) : '';
+      const topRevVal = revCol ? fmtValue(topRevRow[revCol], revCol) : '';
       const topAvgName = topAvgRow ? groupLabel(topAvgRow) : null;
-      const topAvgVal = topAvgRow && avgCol ? formatMetricValue(topAvgRow[avgCol], avgCol) : null;
+      const topAvgVal = topAvgRow && avgCol ? fmtValue(topAvgRow[avgCol], avgCol) : null;
       const topCountName = groupLabel(topCountRow);
       const topCountVal = countCol ? topCountRow[countCol] : null;
       // Naming a group by one column when the query grouped by several would credit that
@@ -1162,8 +1321,8 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
         const lo = sorted[sorted.length - 1];
         const hiTied = tiedAt(col, hi);
         const loTied = tiedAt(col, lo);
-        const hiVal = formatMetricValue(hi[col], col);
-        const loVal = formatMetricValue(lo[col], col);
+        const hiVal = fmtValue(hi[col], col);
+        const loVal = fmtValue(lo[col], col);
         const verb = (n: number) => (n === 2 ? 'are' : 'are all');
         if (hiTied.length === sorted.length) {
           return `All ${sorted.length} returned groups record the same ${noun} (${hiVal}).`;
@@ -1196,7 +1355,7 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
 
         sorted.forEach((r) => {
           key_findings.push({
-            finding: `${groupLabel(r)}: ${metricLabel} is ${formatMetricValue(r[targetCol], targetCol)}${
+            finding: `${groupLabel(r)}: ${metricLabel} is ${fmtValue(r[targetCol], targetCol)}${
               r.customer_count ? ` (${r.customer_count} ${entity.plural})` : ''
             }.`,
             evidence: `${groupCols.map((c) => `${c}="${r[c]}"`).join(', ')}; ${targetCol}=${r[targetCol]}`,
@@ -1215,13 +1374,13 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
           });
         }
       } else if (hasSevereLowOutlier && lowestRateRow && allOther100) {
-        const outlierRev = revCol ? formatMetricValue(lowestRateRow[revCol], revCol) : '';
+        const outlierRev = revCol ? fmtValue(lowestRateRow[revCol], revCol) : '';
         const outlierActive = profile.activeCountCol ? lowestRateRow[profile.activeCountCol] : '';
         const outlierTotal = profile.totalCountCol ? lowestRateRow[profile.totalCountCol] : '';
         const secondRevRow = rowsSortedByRev[1];
 
         overview = `${topRevName} leads ${dimNoun}-level ${revCol?.toLowerCase() || 'revenue'} at ${topRevVal}${
-          secondRevRow && revCol ? `, followed by ${groupLabel(secondRevRow)} at ${formatMetricValue(secondRevRow[revCol], revCol)}` : ''
+          secondRevRow && revCol ? `, followed by ${groupLabel(secondRevRow)} at ${fmtValue(secondRevRow[revCol], revCol)}` : ''
         }. ${groupLabel(lowestRateRow)} is a significant outlier, generating only ${outlierRev} in ${revCol?.toLowerCase() || 'revenue'} with ${outlierActive} of its ${outlierTotal} customers active. All ${countCol && rows[0][countCol] ? rows[0][countCol] : ''} customers in ${rows
           .filter((r) => rateCol && Number(r[rateCol]) === 100)
           .map((r) => groupLabel(r))
@@ -1241,9 +1400,9 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
           countCol && topRevRow[countCol] ? ` across ${topRevRow[countCol]} customers` : ''
         }${topAvgVal ? ` and achieving the highest average ${avgCol?.replace(/^(avg_|average_)/i, '').replace(/_/g, ' ') || 'revenue'} of ${topAvgVal}` : ''}.${
           topCountName !== topRevName && rateCol && topCountRow[rateCol]
-            ? ` ${topCountName} has the largest customer base (${topCountVal}) and ${rateNoun} of ${formatMetricValue(topCountRow[rateCol], rateCol)}${
+            ? ` ${topCountName} has the largest customer base (${topCountVal}) and ${rateNoun} of ${fmtValue(topCountRow[rateCol], rateCol)}${
                 avgCol && topCountRow[avgCol] && topAvgVal
-                  ? `, but its average ${avgCol.replace(/^(avg_|total_)/i, '').replace(/_/g, ' ')} is ${formatMetricValue(topCountRow[avgCol], avgCol)} against ${topAvgVal} for ${topRevName}`
+                  ? `, but its average ${avgCol.replace(/^(avg_|total_)/i, '').replace(/_/g, ' ')} is ${fmtValue(topCountRow[avgCol], avgCol)} against ${topAvgVal} for ${topRevName}`
                   : ''
               }.`
             : ''
@@ -1270,11 +1429,11 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
         key_findings.push({
           finding:
             revTied.length > 1
-              ? `${joinSeries(revTied.map(groupLabel))} ${revTied.length === 2 ? 'are' : 'are all'} tied for the highest ${revCol.replace(/_/g, ' ')} at ${topRevVal}, each contributing ${revSharePct}% of the ${formatMetricValue(totalRevAll, revCol)} returned across ${rows.length} groups.`
+              ? `${joinSeries(revTied.map(groupLabel))} ${revTied.length === 2 ? 'are' : 'are all'} tied for the highest ${revCol.replace(/_/g, ' ')} at ${topRevVal}, each contributing ${revSharePct}% of the ${fmtValue(totalRevAll, revCol)} returned across ${rows.length} groups.`
               : `${topRevName} leads in ${revCol.replace(/_/g, ' ')} with ${topRevVal}${
-                  totalRevAll > 0 ? `, contributing approximately ${revSharePct}% of the ${revCol.replace(/_/g, ' ')} across all ${rows.length} returned groups (${topRevVal} out of ${formatMetricValue(totalRevAll, revCol)})` : ''
+                  totalRevAll > 0 ? `, contributing approximately ${revSharePct}% of the ${revCol.replace(/_/g, ' ')} across all ${rows.length} returned groups (${topRevVal} out of ${fmtValue(totalRevAll, revCol)})` : ''
                 }${custSharePct ? `, despite representing only ${custSharePct}% of customers` : ''}.`,
-          evidence: `${topRevName}: ${topRevVal} / ${formatMetricValue(totalRevAll, revCol)}`,
+          evidence: `${topRevName}: ${topRevVal} / ${fmtValue(totalRevAll, revCol)}`,
           importance: 'high',
         });
       }
@@ -1306,7 +1465,7 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
             const topRow = [...rows].sort((a, b) => (Number(b[col]) || 0) - (Number(a[col]) || 0))[0];
             if (topRow && !key_findings.some((f) => f.finding.toLowerCase().includes(col.replace(/_/g, ' ')))) {
               const tied = tiedAt(col, topRow);
-              const value = formatMetricValue(topRow[col], col);
+              const value = fmtValue(topRow[col], col);
               key_findings.push({
                 finding:
                   tied.length === rows.length
@@ -1336,7 +1495,7 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
         if (firstAvgRow && topRevRow && groupLabel(firstAvgRow) !== groupLabel(topRevRow) && secondAvgValNum > 0) {
           const diffPct = (((topAvgValNum - secondAvgValNum) / secondAvgValNum) * 100).toFixed(0);
           key_findings.push({
-            finding: `${groupLabel(firstAvgRow)} has the highest average ${avgLabel} per customer (${formatMetricValue(topAvgValNum, avgCol)}), approximately ${diffPct}% higher than ${groupLabel(secondAvgRow)} at ${formatMetricValue(secondAvgValNum, avgCol)}.`,
+            finding: `${groupLabel(firstAvgRow)} has the highest average ${avgLabel} per customer (${fmtValue(topAvgValNum, avgCol)}), approximately ${diffPct}% higher than ${groupLabel(secondAvgRow)} at ${fmtValue(secondAvgValNum, avgCol)}.`,
             evidence: `${groupLabel(firstAvgRow)} (${topAvgValNum}) vs ${groupLabel(secondAvgRow)} (${secondAvgValNum})`,
             importance: 'high',
           });
@@ -1347,7 +1506,7 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
           const secondMult = secondAvgValNum > 0 && rowsSortedByAvg.length > 2 && topAvgValNum / secondAvgValNum >= 1.05 ? (topAvgValNum / secondAvgValNum).toFixed(1) : null;
 
           key_findings.push({
-            finding: `${groupLabel(firstAvgRow)}'s average ${avgLabel} is approximately ${lowestMult} times that of ${groupLabel(lowestAvgRow)} (${formatMetricValue(topAvgValNum, avgCol)} vs ${formatMetricValue(lowestAvgValNum, avgCol)})${
+            finding: `${groupLabel(firstAvgRow)}'s average ${avgLabel} is approximately ${lowestMult} times that of ${groupLabel(lowestAvgRow)} (${fmtValue(topAvgValNum, avgCol)} vs ${fmtValue(lowestAvgValNum, avgCol)})${
               secondMult ? `, and ${secondMult} times the next-highest group ${groupLabel(secondAvgRow)}` : ''
             }.`,
             evidence: `Calculated ratio ${topAvgValNum} / ${lowestAvgValNum} across the grouped ${avgLabel}`,
@@ -1367,8 +1526,8 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
           });
         } else {
           key_findings.push({
-            finding: `${groupLabel(topRateRow)} has the ${rateIsActivation ? 'strongest activation rate' : `highest ${rateLabel}`} at ${formatMetricValue(topRateRow[rateCol], rateCol)}${
-              rowsSortedByRate[1] ? `, followed by ${groupLabel(rowsSortedByRate[1])} at ${formatMetricValue(rowsSortedByRate[1][rateCol], rateCol)}` : ''
+            finding: `${groupLabel(topRateRow)} has the ${rateIsActivation ? 'strongest activation rate' : `highest ${rateLabel}`} at ${fmtValue(topRateRow[rateCol], rateCol)}${
+              rowsSortedByRate[1] ? `, followed by ${groupLabel(rowsSortedByRate[1])} at ${fmtValue(rowsSortedByRate[1][rateCol], rateCol)}` : ''
             }.`,
             evidence: `${rateCol} ranking across groups`,
             importance: 'medium',
@@ -1381,7 +1540,7 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
         const lowestTotalCount = rateIsActivation && profile.totalCountCol ? lowestRateRow[profile.totalCountCol] : null;
 
         key_findings.push({
-          finding: `${groupLabel(lowestRateRow)} has the ${rateIsActivation ? 'lowest activation rate' : `lowest ${rateLabel}`} at ${formatMetricValue(lowestRateVal, rateCol)}${
+          finding: `${groupLabel(lowestRateRow)} has the ${rateIsActivation ? 'lowest activation rate' : `lowest ${rateLabel}`} at ${fmtValue(lowestRateVal, rateCol)}${
             lowestActiveCount !== null && lowestTotalCount !== null ? `, with ${lowestActiveCount} of its ${lowestTotalCount} customers active` : ''
           }.`,
           evidence: `Lowest ${rateCol} in ${groupLabel(lowestRateRow)}`,
@@ -1410,8 +1569,8 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
           );
           if (efficientRow) {
             key_findings.push({
-              finding: `${groupLabel(efficientRow)} generates ${formatMetricValue(efficientRow[revCol], revCol)} from only ${efficientRow[countCol]} customers, indicating comparatively high revenue per customer.`,
-              evidence: `${groupLabel(efficientRow)}: ${formatMetricValue(efficientRow[revCol], revCol)} across ${efficientRow[countCol]} customers`,
+              finding: `${groupLabel(efficientRow)} generates ${fmtValue(efficientRow[revCol], revCol)} from only ${efficientRow[countCol]} customers, indicating comparatively high revenue per customer.`,
+              evidence: `${groupLabel(efficientRow)}: ${fmtValue(efficientRow[revCol], revCol)} across ${efficientRow[countCol]} customers`,
               importance: 'medium',
             });
           }
@@ -1423,7 +1582,7 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
         rows.slice(0, 4).forEach((r) => {
           const metricCol = profile.numericCols[0] || columns[1];
           key_findings.push({
-            finding: `${groupLabel(r)}: ${metricCol.replace(/_/g, ' ')} is ${formatMetricValue(r[metricCol], metricCol)}${
+            finding: `${groupLabel(r)}: ${metricCol.replace(/_/g, ' ')} is ${fmtValue(r[metricCol], metricCol)}${
               r.customer_count ? ` (${r.customer_count} ${entity.plural})` : ''
             }.`,
             evidence: `${groupCols.map((c) => `${c}="${r[c]}"`).join(', ')}; ${metricCol}=${r[metricCol]}`,
@@ -1458,10 +1617,10 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
           );
         }
         if (topRateRow && rateCol) {
-          performance_comparison.push(`${rateIsActivation ? 'Highest Activation' : `Highest ${rateLabel}`}: ${groupLabel(topRateRow)} records the highest ${rateNoun} at ${formatMetricValue(topRateRow[rateCol], rateCol)}.`);
+          performance_comparison.push(`${rateIsActivation ? 'Highest Activation' : `Highest ${rateLabel}`}: ${groupLabel(topRateRow)} records the highest ${rateNoun} at ${fmtValue(topRateRow[rateCol], rateCol)}.`);
         }
         if (lowestRateRow && rateCol) {
-          performance_comparison.push(`${rateIsActivation ? 'Lowest Activation' : `Lowest ${rateLabel}`}: ${groupLabel(lowestRateRow)} records the lowest ${rateNoun} at ${formatMetricValue(lowestRateRow[rateCol], rateCol)}.`);
+          performance_comparison.push(`${rateIsActivation ? 'Lowest Activation' : `Lowest ${rateLabel}`}: ${groupLabel(lowestRateRow)} records the lowest ${rateNoun} at ${fmtValue(lowestRateRow[rateCol], rateCol)}.`);
         }
         if (topCountName && countCol && topRevRow && revCol && topCountName !== topRevName) {
           const countTied = tiedAt(countCol, topCountRow);
@@ -1487,7 +1646,7 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
         business_implications.push({
           implication: `${groupLabel(lowestRateRow)} records the lowest ${rateNoun} of the returned groups while also contributing the least revenue. ${
             rowsSortedByRev[1] && revCol && countCol
-              ? `${groupLabel(rowsSortedByRev[1])} reaches ${formatMetricValue(rowsSortedByRev[1][revCol], revCol)} from ${rowsSortedByRev[1][countCol]} customers, against ${formatMetricValue(rowsSortedByRev[0][revCol], revCol)} from ${rowsSortedByRev[0][countCol]} for ${groupLabel(rowsSortedByRev[0])}.`
+              ? `${groupLabel(rowsSortedByRev[1])} reaches ${fmtValue(rowsSortedByRev[1][revCol], revCol)} from ${rowsSortedByRev[1][countCol]} customers, against ${fmtValue(rowsSortedByRev[0][revCol], revCol)} from ${rowsSortedByRev[0][countCol]} for ${groupLabel(rowsSortedByRev[0])}.`
               : ''
           }`,
           confidence: 'high',
@@ -1509,7 +1668,7 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
             : null;
         if (altCol && altRow) {
           const altTied = tiedAt(altCol, altRow);
-          const altVal = formatMetricValue(altRow[altCol], altCol);
+          const altVal = fmtValue(altRow[altCol], altCol);
           const altLabel = altCol.replace(/_/g, ' ');
           const revNote = revCol || !/revenue|mrr|\barr\b|sales/i.test(question) ? '' : '; this result set contains no revenue measure, so no revenue conclusion is drawn';
           const altLead =
@@ -1523,7 +1682,7 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
               ? {
                   implication: `${topRevName} holds ${(
                     ((Number(topRevRow[revCol]) / totalRevAll) * 100) as number
-                  ).toFixed(1)}% of the ${formatMetricValue(totalRevAll, revCol)} returned across ${rows.length} groups, and the leading group is ${
+                  ).toFixed(1)}% of the ${fmtValue(totalRevAll, revCol)} returned across ${rows.length} groups, and the leading group is ${
                       Number(lowestRevRow[revCol]) > 0
                         ? `${(Number(topRevRow[revCol]) / Number(lowestRevRow[revCol])).toFixed(1)}× the smallest`
                         : 'larger than every other group combined by total'
@@ -1555,7 +1714,7 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
           const richer = byRevOrder[rank];
           const bulkier = byCountOrder[rank];
           business_implications.push({
-            implication: `Customer volume does not directly scale with revenue: ${groupLabel(bulkier)} ranks ahead of ${groupLabel(richer)} by ${countCol.replace(/_/g, ' ')} (${bulkier[countCol]} vs ${richer[countCol]}) yet records less ${revCol.replace(/_/g, ' ')} (${formatMetricValue(bulkier[revCol], revCol)} vs ${formatMetricValue(richer[revCol], revCol)}).`,
+            implication: `Customer volume does not directly scale with revenue: ${groupLabel(bulkier)} ranks ahead of ${groupLabel(richer)} by ${countCol.replace(/_/g, ' ')} (${bulkier[countCol]} vs ${richer[countCol]}) yet records less ${revCol.replace(/_/g, ' ')} (${fmtValue(bulkier[revCol], revCol)} vs ${fmtValue(richer[revCol], revCol)}).`,
             confidence: 'high',
           });
         }
@@ -1609,26 +1768,37 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
       // LIMITATIONS
       // =====================================================================
       if (rows.length > 5 && revCol && totalRevAll > 0) {
+        const narrowed = /\b(WHERE|HAVING|LIMIT|QUALIFY)\b/i.test(sql);
         limitations.push(
-          `The narrative below describes the leading rows only; the ${rows.length} returned rows are complete in the result table, and the percentages quoted are shares of the ${formatMetricValue(totalRevAll, revCol)} in this filtered result rather than of the whole dataset.`
+          `The narrative describes the leading rows only; the ${rows.length} returned rows are complete in the result table, and the percentages quoted are shares of the ${formatMetricValue(totalRevAll, revCol)} ${
+            narrowed ? 'in this filtered result rather than of the whole dataset' : 'returned across these groups'
+          }.`
         );
       } else if (rows.length > 5) {
         limitations.push(
-          `The narrative below describes the leading rows only; all ${rows.length} returned rows are visible in the result table.`
+          `The narrative describes the leading rows only; all ${rows.length} returned rows are visible in the result table.`
         );
       }
       // Caveats must be derived from the columns actually returned, so a generic result
       // set is never described as if it came from a known churn or marketing dataset.
       const hasCostCol = columns.some((c) => /cost|spend|expenditure|budget|cac/i.test(c));
-      const hasLifecycleCol = columns.some((c) => /status|churn|retention|renewal|tenure|cancel/i.test(c));
+      const lifecyclePattern = /status|churn|retention|renewal|tenure|cancel/i;
+      const hasLifecycleCol = columns.some((c) => lifecyclePattern.test(c));
+      // The dataset can hold a lifecycle column that this grouped result simply does not carry;
+      // saying "no lifecycle column" would then be wrong about the data.
+      const datasetLifecycleCols = (semanticSchema?.columns || [])
+        .map((c: { name: string }) => c.name)
+        .filter((name: string) => lifecyclePattern.test(name));
       if (dimCol.toLowerCase().includes('channel') && !hasCostCol) {
         limitations.push('The result carries no acquisition-cost or campaign-expenditure column, so it cannot establish CAC, ROI or channel profitability.');
       } else if (dimCol.toLowerCase().includes('city') || dimCol.toLowerCase().includes('region')) {
         limitations.push('The result contains no explanatory columns for geography, so it shows where the measures differ between groups but not why.');
-      } else if (!hasLifecycleCol) {
-        limitations.push(`The result is a single-query snapshot of ${rows.length} grouped row${rows.length === 1 ? '' : 's'} from "${datasetName}" and has no lifecycle column, so it cannot establish retention, lifetime value or churn.`);
-      } else {
+      } else if (hasLifecycleCol) {
         limitations.push(`The result is a single-query snapshot of ${rows.length} grouped row${rows.length === 1 ? '' : 's'} from "${datasetName}"; it describes the rows returned and does not extend to periods or records outside them.`);
+      } else if (datasetLifecycleCols.length > 0) {
+        limitations.push(`The result is a single-query snapshot of ${rows.length} grouped row${rows.length === 1 ? '' : 's'} from "${datasetName}"; its groups do not carry ${datasetLifecycleCols.join(' or ')}, so retention, lifetime value and churn cannot be established from this result alone.`);
+      } else {
+        limitations.push(`The result is a single-query snapshot of ${rows.length} grouped row${rows.length === 1 ? '' : 's'} from "${datasetName}" and has no lifecycle column, so it cannot establish retention, lifetime value or churn.`);
       }
     }
   }
@@ -1686,12 +1856,15 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
     if (queryPlan?.intent === 'top_n_per_group') {
       const partitions = queryPlan.partition_by || [];
       const itemColumn = queryPlan.item_entity || entityCol;
+      const itemNoun = itemColumn.replace(/_(name|id)$/i, '').replace(/_/g, ' ');
+      const groupNoun = partitions.map((column) => column.replace(/_/g, ' ')).join(' and ');
+      const rankMetricLabel = rankMetricCol.replace(/_/g, ' ');
       return buildLegacyPayload({
         status: 'verified',
         category,
-        overview: `Returned ${rows.length} ranked ${itemColumn} records within ${partitions.join(', ')} groups, ordered by ${rankMetricCol}.`,
+        overview: `Returned the top ${itemNoun} records within each ${groupNoun} (${rows.length} rows), ranked by ${rankMetricLabel}.`,
         key_findings: rows.slice(0, 8).map((row) => ({
-          finding: `${partitions.map((column) => row[column]).join(' / ')}: ${row[itemColumn]} — ${formatMetricValue(row[rankMetricCol], rankMetricCol)} in ${rankMetricCol}.`,
+          finding: `${partitions.map((column) => row[column]).join(' / ')}: ${row[itemColumn]} — ${formatMetricValue(row[rankMetricCol], rankMetricCol)} in ${rankMetricLabel}.`,
           evidence: `${itemColumn}=${row[itemColumn]}, ${rankMetricCol}=${row[rankMetricCol]}`,
           importance: 'high' as const,
         })),

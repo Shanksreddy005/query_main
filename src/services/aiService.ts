@@ -187,10 +187,13 @@ interface ProviderRequestContext {
 
 // A provider socket that opens but never answers would otherwise hang the query until the
 // browser gives up, so every dispatch carries its own deadline separate from user cancel.
-let providerRequestTimeoutMs = 45000;
+// Free-tier Gemini planning calls were measured at 13-45s (queueing, not thinking depth),
+// so the cap must sit well above that range or healthy requests get aborted.
+export const DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS = 90000;
+let providerRequestTimeoutMs = DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS;
 
 export function setProviderRequestTimeoutForTesting(ms: number | null): void {
-  providerRequestTimeoutMs = ms === null ? 45000 : ms;
+  providerRequestTimeoutMs = ms === null ? DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS : ms;
 }
 
 function createDeadlineSignal(cancelSignal: AbortSignal, timeoutMs: number) {

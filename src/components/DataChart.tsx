@@ -565,7 +565,7 @@ export const DataChart: React.FC<DataChartProps> = ({
                 className="group cursor-pointer select-none"
                 onMouseEnter={() => setHoveredIdx(i)}
                 onMouseLeave={() => setHoveredIdx(null)}
-                title={`${d.label}: ${formatVal(d.value)} (${pct}% of total)`}
+                title={`${d.label}: ${formatVal(d.value)} (${pct}% of the ${chartData.length} values shown)`}
               >
                 <div className="flex justify-between items-center text-xs mb-1">
                   <span
@@ -576,7 +576,7 @@ export const DataChart: React.FC<DataChartProps> = ({
                     {d.label}
                   </span>
                   <div className="flex items-center gap-2 font-mono">
-                    <span className="text-[10px] text-text-muted">{pct}% share</span>
+                    <span className="text-[10px] text-text-muted">{pct}% of shown</span>
                     <span
                       className={`text-[11px] transition-colors duration-fast ${
                         isHovered ? 'text-accent font-semibold' : 'text-text-primary font-medium'

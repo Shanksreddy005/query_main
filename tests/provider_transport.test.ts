@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { cancelActiveQueryProcessing, processNaturalLanguageQuery, setProviderRequestTimeoutForTesting } from '../src/services/aiService';
+import { cancelActiveQueryProcessing, DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS, processNaturalLanguageQuery, setProviderRequestTimeoutForTesting } from '../src/services/aiService';
 import { inferDatasetSchema } from '../src/services/sampleData';
 import { DEFAULT_MODELS } from '../src/services/modelRegistry';
 import { telemetryAuditor } from '../src/services/telemetryAuditor';
@@ -128,6 +128,12 @@ describe('Provider wire auditing and cancellation', { concurrency: false }, () =
     assert.equal(seen.signal?.aborted, true, 'the deadline must reach the transport signal');
     assert.equal(telemetryAuditor.getLatestEvent()?.error, 'Provider request timed out.');
     telemetryAuditor.clearHistory();
+  });
+
+  it('keeps the default provider deadline above measured free-tier planning latency', () => {
+    // Real gemini-3.6-flash planning calls took 13-45s; a 45s cap aborted healthy requests.
+    assert.ok(DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS >= 60000, `deadline ${DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS}ms is below observed latency`);
+    assert.ok(DEFAULT_PROVIDER_REQUEST_TIMEOUT_MS <= 120000, 'a hung socket must still be cut off within two minutes');
   });
 
   it('reports a non-JSON provider body as a transport failure without echoing it', async (t) => {

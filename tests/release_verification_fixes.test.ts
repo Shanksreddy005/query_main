@@ -964,6 +964,15 @@ describe('Final release verification — display labels never expose SQL aliases
     assert.doesNotMatch(chart, /bars on \{xKey\}/);
     assert.match(chart, /\{yLabel\} vs \{xLabel\}/);
   });
+
+  it('labels bar percentages against the shown values, never as a share of the whole dataset', () => {
+    // A top-5 chart showed "23.4% share" for a customer holding 10.8% of total MRR.
+    const chart = fs.readFileSync('src/components/DataChart.tsx', 'utf-8');
+    assert.doesNotMatch(chart, /% share/);
+    assert.doesNotMatch(chart, /% of total/);
+    assert.match(chart, /% of shown/);
+    assert.match(chart, /values shown/);
+  });
 });
 
 describe('Final release verification — the scope guard does not refuse analytics phrased as questions', () => {
@@ -1139,5 +1148,136 @@ describe('Final release verification — row counts do not invent an entity or d
     assert.match(plain.overview || '', /3 records/, plain.overview);
     const distinct = count('SELECT COUNT(DISTINCT region) AS row_count FROM regional_sales', 'regional_sales');
     assert.match(distinct.overview || '', /3 distinct/, distinct.overview);
+  });
+});
+
+describe('Real-provider findings — per-group ranking prose', () => {
+  it('describes per-group rankings in readable labels, not raw SQL aliases', () => {
+    // Replays the gemini-3.6-flash result for "top 2 customers by MRR in each city".
+    const plan = parseQueryPlan({ intent: 'top_n_per_group', partition_by: ['city'], item_entity: 'customer_name', dimensions: ['city', 'customer_name'], metric: 'mrr_usd', ranking_direction: 'DESC', limit: 2 });
+    const rows = [
+      { city: 'Bengaluru', customer_name: 'BluePeak Systems', total_mrr: 1800 },
+      { city: 'Bengaluru', customer_name: 'Apex Systems', total_mrr: 1300 },
+      { city: 'Chennai', customer_name: 'Evergreen Group', total_mrr: 2500 },
+      { city: 'Chennai', customer_name: 'Dynamo Group', total_mrr: 1900 },
+    ];
+    const sql = 'WITH r AS (SELECT city, customer_name, SUM(mrr_usd) AS total_mrr, ROW_NUMBER() OVER (PARTITION BY city ORDER BY SUM(mrr_usd) DESC) AS rank FROM dataset GROUP BY city, customer_name) SELECT city, customer_name, total_mrr FROM r WHERE rank <= 2 ORDER BY city, total_mrr DESC';
+    const s = generateEvidenceBasedSummary(ctx('What are the top 2 customers by MRR in each city?', sql, rows, plan));
+    const prose = [s.overview, ...(s.findings || [])].join('\n');
+    assert.doesNotMatch(prose, /customer_name|total_mrr/, prose);
+    assert.match(prose, /customer records within each city/, prose);
+    assert.match(prose, /Chennai: Evergreen Group — \$2,500 in total MRR/, prose);
+  });
+});
+
+describe('Real-provider findings — unfiltered multi-dimensional breakdown', () => {
+  // Replays the gemini-3.6-flash result for "total MRR and customer count by segment and subscription status".
+  const rows = [
+    { segment: 'Enterprise', subscription_status: 'Active', total_mrr: 12500, customer_count: 6 },
+    { segment: 'Mid-Market', subscription_status: 'Active', total_mrr: 5050, customer_count: 5 },
+    { segment: 'SMB', subscription_status: 'Active', total_mrr: 1800, customer_count: 8 },
+    { segment: 'Enterprise', subscription_status: 'Cancelled', total_mrr: 1500, customer_count: 1 },
+    { segment: 'Mid-Market', subscription_status: 'Cancelled', total_mrr: 1100, customer_count: 1 },
+    { segment: 'Startup', subscription_status: 'Active', total_mrr: 750, customer_count: 6 },
+    { segment: 'Startup', subscription_status: 'Cancelled', total_mrr: 350, customer_count: 2 },
+    { segment: 'SMB', subscription_status: 'Cancelled', total_mrr: 150, customer_count: 1 },
+  ];
+  const plan = parseQueryPlan({ intent: 'group_aggregate', dimensions: ['segment', 'subscription_status'], metric: 'mrr_usd' });
+  const q = 'Break down total MRR and customer count by segment and subscription status';
+  const base = 'SELECT segment, subscription_status, ROUND(SUM(mrr_usd), 2) AS total_mrr, COUNT(DISTINCT customer_id) AS customer_count FROM dataset GROUP BY segment, subscription_status';
+
+  it('does not call an unfiltered result "filtered"', () => {
+    const s = generateEvidenceBasedSummary(ctx(q, `${base} ORDER BY total_mrr DESC`, rows, plan));
+    const lim = (s.limitations || []).join('\n');
+    assert.doesNotMatch(lim, /filtered result/, lim);
+    assert.doesNotMatch(lim, /narrative below/, lim);
+    assert.match(lim, /shares of the \$23,200 returned across these groups/, lim);
+  });
+
+  it('still flags the share as partial when the SQL narrows the rows', () => {
+    const s = generateEvidenceBasedSummary(ctx(q, `${base.replace(' GROUP BY', " WHERE city <> 'Delhi' GROUP BY")} ORDER BY total_mrr DESC`, rows, plan));
+    assert.match((s.limitations || []).join('\n'), /in this filtered result rather than of the whole dataset/);
+  });
+});
+
+describe('Real-provider findings — executive summary answers "how much they represent"', () => {
+  const q = 'Give me an executive summary of our customer base: total customers, total MRR, cancelled customers and how much MRR they represent';
+  const sql = "SELECT COUNT(customer_id) AS total_customers, ROUND(SUM(mrr_usd), 2) AS total_mrr, COUNT(CASE WHEN LOWER(subscription_status) IN ('cancelled') THEN 1 END) AS cancelled_customers, ROUND(SUM(CASE WHEN LOWER(subscription_status) IN ('cancelled') THEN mrr_usd ELSE 0 END), 2) AS cancelled_mrr FROM dataset";
+
+  it('states the subset share of each total that the same row returned', () => {
+    // Replays the gemini-3.6-flash result; 5/30 customers and $3,100/$23,200 MRR.
+    const s = generateEvidenceBasedSummary(ctx(q, sql, [{ total_customers: 30, total_mrr: 23200, cancelled_customers: 5, cancelled_mrr: 3100 }]));
+    const text = [s.overview, ...(s.findings || [])].join('\n');
+    assert.match(text, /cancelled customers \(5\) are 16\.7% of total customers \(30\)/i, text);
+    assert.match(text, /cancelled MRR \(\$3,100\) are 13\.4% of total MRR \(\$23,200\)/i, text);
+  });
+
+  it('never treats an average or a ratio as a share of the total', () => {
+    const s = generateEvidenceBasedSummary(ctx('Average and total MRR', 'SELECT AVG(mrr_usd) AS avg_mrr, SUM(mrr_usd) AS total_mrr FROM dataset', [{ avg_mrr: 773.33, total_mrr: 23200 }]));
+    assert.doesNotMatch(JSON.stringify(s), /% of total MRR/);
+  });
+
+  it('skips a "subset" that exceeds its total', () => {
+    const s = generateEvidenceBasedSummary(ctx(q, sql, [{ total_customers: 3, cancelled_customers: 5 }]));
+    assert.doesNotMatch(JSON.stringify(s), /% of total customers/);
+  });
+});
+
+describe('Real-provider findings — lifecycle caveat names the actual gap', () => {
+  // Both gemini-3.6-flash and openai/gpt-oss-120b said "no lifecycle column" for a dataset
+  // whose subscription_status column was simply not in the grouped result.
+  const plan = parseQueryPlan({ intent: 'group_aggregate', dimensions: ['segment'], metric: 'mrr_usd' });
+  const sql = 'SELECT segment, ROUND(SUM(mrr_usd), 2) AS total_mrr, COUNT(DISTINCT customer_id) AS customer_count FROM dataset GROUP BY segment ORDER BY total_mrr DESC';
+  const rows = [
+    { segment: 'Enterprise', total_mrr: 14000, customer_count: 7 },
+    { segment: 'Mid-Market', total_mrr: 6150, customer_count: 6 },
+    { segment: 'SMB', total_mrr: 1950, customer_count: 9 },
+    { segment: 'Startup', total_mrr: 1100, customer_count: 8 },
+  ];
+  const lifecycleCols = [{ ...schema.columns[0], name: 'subscription_status' }];
+
+  it('says the grouped result omits the lifecycle column when the dataset has one', () => {
+    const s = generateEvidenceBasedSummary({ ...ctx('Show total MRR and number of customers by segment', sql, rows, plan), semanticSchema: { ...schema, columns: [...schema.columns, ...lifecycleCols] } });
+    const lim = (s.limitations || []).join('\n');
+    assert.doesNotMatch(lim, /has no lifecycle column/, lim);
+    assert.match(lim, /its groups do not carry subscription_status/, lim);
+  });
+
+  it('still says the dataset has no lifecycle column when it truly lacks one', () => {
+    const s = generateEvidenceBasedSummary(ctx('Show total MRR and number of customers by segment', sql, rows, plan));
+    const lim = (s.limitations || []).join('\n');
+    if (!schema.columns.some((c) => /status|churn|retention|renewal|tenure|cancel/i.test(c.name))) {
+      assert.match(lim, /has no lifecycle column/, lim);
+    }
+  });
+});
+
+describe('Real-provider findings — provider-chosen aliases do not change money formatting', () => {
+  const plan = parseQueryPlan({ intent: 'group_aggregate', dimensions: ['plan'], metric: 'mrr_usd' });
+  const rows = [
+    { plan: 'Enterprise', plan_total: 14000, pct_of_total: 60.34 },
+    { plan: 'Growth', plan_total: 4250, pct_of_total: 18.32 },
+    { plan: 'Business', plan_total: 3600, pct_of_total: 15.52 },
+    { plan: 'Starter', plan_total: 1350, pct_of_total: 5.82 },
+  ];
+  const q = 'What percentage of total MRR comes from each plan?';
+
+  it('formats SUM(mrr_usd) AS plan_total as currency and keeps it as the revenue measure', () => {
+    // Replays the openai/gpt-oss-120b result, which printed "14,000" and claimed no revenue measure.
+    const sql = 'WITH totals AS (SELECT SUM(mrr_usd) AS grand_total FROM querymind_sample_saas), breakdown AS (SELECT plan, SUM(mrr_usd) AS plan_total FROM querymind_sample_saas GROUP BY plan) SELECT b.plan, b.plan_total, ROUND((b.plan_total / NULLIF(t.grand_total,0)) * 100, 2) AS pct_of_total FROM breakdown b, totals t ORDER BY b.plan_total DESC';
+    const s = generateEvidenceBasedSummary(ctx(q, sql, rows, plan));
+    const text = JSON.stringify(s);
+    assert.match(text, /\$14,000/, text);
+    assert.match(text, /\$4,250/, text);
+    const bare = text.replace(/\$14,000/g, '');
+    assert.doesNotMatch(bare, /14,000/, bare);
+    assert.doesNotMatch(text, /contains no revenue measure/, text);
+    assert.doesNotMatch(text, /no revenue conclusion/, text);
+  });
+
+  it('does not treat a count aliased like money as currency', () => {
+    const sql = 'SELECT plan, COUNT(customer_id) AS customer_count FROM dataset GROUP BY plan';
+    const s = generateEvidenceBasedSummary(ctx('Customers by plan', sql, [{ plan: 'Enterprise', customer_count: 7 }], plan));
+    assert.doesNotMatch(JSON.stringify(s), /\$7\b/);
   });
 });
