@@ -32,7 +32,7 @@ Both DuckDB-WASM binaries exceed Cloudflare Pages' 25 MiB per-file limit (`duckd
 R2 object requirements:
 
 - **Content-Type:** `application/wasm` (the worker uses `WebAssembly.instantiateStreaming`, which rejects other MIME types).
-- **CORS:** allowed origins `https://querymind.ai`, `https://www.querymind.ai`, and the Cloudflare Pages production/preview origins; methods `GET`; no credentials. The worker issues a plain cross-origin `GET` (no preflight).
+- **CORS:** allowed origins `https://querymind.in`, `https://www.querymind.in`, and the Cloudflare Pages origin (placeholder `https://<pages-project>.pages.dev` — replace with the actual project URL once known, including it for preview deployments if used); methods `GET`; no credentials. The worker issues a plain cross-origin `GET` (no preflight).
 - **Cache-Control:** `public, max-age=31536000, immutable` — safe because the object key embeds the DuckDB-WASM version.
 - The bucket must stay private except for these public static objects; no credentials are needed by the app (public read via the custom domain only).
 
