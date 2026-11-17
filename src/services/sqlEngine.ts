@@ -21,6 +21,12 @@ let initPromise: Promise<{ db: duckdb.AsyncDuckDB; conn: duckdb.AsyncDuckDBConne
 
 let globalQuerySequenceId = 0;
 
+// DuckDB-WASM runtime version; the R2 object keys are versioned by this value.
+// Both .wasm modules (34.3 / 39.4 MiB) exceed Cloudflare Pages' 25 MiB per-file
+// limit, so the production build fetches them from the first-party R2 domain.
+// Worker scripts remain same-origin; only the mainModule URL moves.
+const DUCKDB_WASM_VERSION = '1.33.1-dev57.0';
+
 /**
  * Cleanly terminates the active DuckDB worker and releases all resources.
  * Used for hard timeout cancellation and resetting contaminated worker states.
@@ -63,20 +69,24 @@ export async function getDuckDB() {
     return initPromise;
   }
   initPromise = (async () => {
-    // Self-hosted DuckDB-WASM assets from public/duckdb — the SQL engine is
-    // loaded from the same origin, so no third-party CDN request ever occurs.
+    // Worker scripts are self-hosted from public/duckdb (same origin). The .wasm
+    // modules are served from the first-party R2 domain in production builds —
+    // no third-party CDN is ever contacted and no dataset leaves the browser.
     const assetBase = `${window.location.origin}/duckdb`;
-    const LOCAL_BUNDLES = {
+    const wasmAssetBase =
+      (import.meta as any).env?.VITE_DUCKDB_WASM_BASE_URL ||
+      (import.meta.env.DEV ? assetBase : `https://assets.querymind.in/duckdb/${DUCKDB_WASM_VERSION}`);
+    const DUCKDB_BUNDLES = {
       mvp: {
-        mainModule: `${assetBase}/duckdb-mvp.wasm`,
+        mainModule: `${wasmAssetBase}/duckdb-mvp.wasm`,
         mainWorker: `${assetBase}/duckdb-browser-mvp.worker.js`,
       },
       eh: {
-        mainModule: `${assetBase}/duckdb-eh.wasm`,
+        mainModule: `${wasmAssetBase}/duckdb-eh.wasm`,
         mainWorker: `${assetBase}/duckdb-browser-eh.worker.js`,
       },
     };
-    const bundle = await duckdb.selectBundle(LOCAL_BUNDLES);
+    const bundle = await duckdb.selectBundle(DUCKDB_BUNDLES);
     const workerUrl = URL.createObjectURL(
       new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' })
     );
