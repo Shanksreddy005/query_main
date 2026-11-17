@@ -1,7 +1,10 @@
-# Security, Privacy & Compliance Architecture
+# Security Architecture
+
 **QueryMind Analytic Platform** — *Technical Specification & Data Sovereignty Model*
 
-This document defines QueryMind's security architecture, technical verification boundaries, outbound data policies, and threat model. It distinguishes between **verified technical guarantees**, **architectural designs**, and **user/environment responsibilities**.
+This document defines QueryMind's security architecture, technical verification boundaries, and SQL sandboxing threat model. It distinguishes between **verified technical guarantees**, **architectural designs**, and **user/environment responsibilities**.
+
+Outbound data policy, prompt privacy and credential storage are covered in the companion document [PRIVACY.md](PRIVACY.md).
 
 ---
 
@@ -46,25 +49,7 @@ QueryMind executes analytical queries without intermediate database servers, cac
 
 ---
 
-## 3. Outbound Data Policy & Prompt Privacy
-
-QueryMind enforces strict data boundary controls when interacting with third-party LLM providers:
-
-### What IS Transmitted to the Model
-- The user's natural language question string.
-- Column names and data types (e.g. `mrr: number`, `plan_tier: string`).
-- Inferred column roles (`MEASURE`, `DIMENSION`, `TEMPORAL`, `IDENTIFIER`).
-- Categorical sample values are excluded from the live planning prompt. Values explicitly entered in the user's question are transmitted as part of that question.
-
-### What is NEVER Transmitted to the Model
-- **Zero Raw Rows**: User transaction rows, financial values, or table data records are never included in prompts.
-- **Zero Result Rows**: Output rows returned by DuckDB execution remain local in client memory.
-- **PII Masking**: Columns identified as PII (emails, phone numbers, SSNs, credit cards, user IDs, full names) have their sample values replaced with synthetic masks (e.g. `[Protected PII: Synthetic values only]`).
-- **High-Cardinality Identifiers**: Customer IDs, account numbers, and primary keys are scrubbed and replaced with generic metadata tokens.
-
----
-
-## 4. SQL Security & Sandbox Defense in Depth
+## 3. SQL Security & Sandbox Defense in Depth
 
 To prevent malicious prompts or misaligned models from escaping the analytical boundary:
 
@@ -82,13 +67,3 @@ To prevent malicious prompts or misaligned models from escaping the analytical b
 5. **Execution Timeout & Resource Protection**:
    - DuckDB queries are bounded by a 15-second execution timeout to prevent runaway Cartesian joins from freezing browser threads.
    - Result row materialization is capped at 5,000 rows with explicit truncation indicators.
-
----
-
-## 5. BYOK Credential Storage & Threat Model
-
-- **Storage**: User API keys are stored in browser `localStorage` or session memory. Keys are never transmitted to QueryMind authors, proxies, or logging services.
-- **Direct Dispatch**: Requests use client-side `fetch()` with authorization headers directly targeting official provider APIs.
-- **Threat Model & Residual Risks**:
-  - *Browser Environment Security*: An analyst using an untrusted browser, malicious extensions, or a compromised machine is vulnerable to client-side extraction.
-  - *Third-Party LLM Provider Logging*: While QueryMind transmits zero raw records, the user's natural language question and column schema are subject to the data retention policies of the user's configured provider (Google, Groq, OpenAI). Users in regulated environments should configure enterprise zero-data-retention agreements with their respective providers.
