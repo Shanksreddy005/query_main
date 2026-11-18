@@ -1,6 +1,12 @@
-import React, { useState, useId, useRef } from 'react';
+import React, { useState } from 'react';
 import { ChartSuggestion } from '../types';
 import { formatHeaderName } from '../services/visualizationSelector';
+import {
+  buildStandaloneChartSvg,
+  formatChartValue,
+  DARK_CHART_EXPORT_THEME,
+  LIGHT_CHART_EXPORT_THEME,
+} from '../services/chartSvgExport';
 import {
   BarChart3,
   PieChart,
@@ -47,12 +53,7 @@ const DARK_PALETTE = [
 
 function formatVal(val: any): string {
   if (val === undefined || val === null) return '-';
-  if (typeof val === 'number') {
-    if (Math.abs(val) >= 1_000_000) return `${(val / 1_000_000).toFixed(1)}M`;
-    if (Math.abs(val) >= 1_000) return `${(val / 1_000).toFixed(1)}K`;
-    if (Number.isInteger(val)) return val.toLocaleString();
-    return val.toFixed(1);
-  }
+  if (typeof val === 'number') return formatChartValue(val);
   return String(val);
 }
 
@@ -65,7 +66,6 @@ export const DataChart: React.FC<DataChartProps> = ({
   onClose,
   allowCustomize = true,
 }) => {
-  const chartContainerRef = useRef<HTMLDivElement>(null);
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const [showConfig, setShowConfig] = useState<boolean>(false);
 
@@ -149,12 +149,21 @@ export const DataChart: React.FC<DataChartProps> = ({
   const isColBar = chartType === 'bar';
   const isHBar = chartType === 'horizontal_bar';
 
-  // Export SVG handler
+  // Export SVG handler — builds a standalone document from the same chartData the
+  // on-screen view renders, never by serializing DOM nodes (the panel markup also holds toolbar icons).
   const handleDownloadSvg = () => {
-    const svgEl = chartContainerRef.current?.querySelector('svg');
-    if (!svgEl) return;
-    const svgData = new XMLSerializer().serializeToString(svgEl);
-    const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+    const svgDocument = buildStandaloneChartSvg({
+      type: chartType,
+      data: chartData.map((d) => ({ label: d.label, value: d.value })),
+      palette,
+      theme: isDarkMode ? DARK_CHART_EXPORT_THEME : LIGHT_CHART_EXPORT_THEME,
+      title: suggestion.title || `${yLabel} by ${xLabel}`,
+      xLabel,
+      yLabel,
+      aggregated: aggMap.size < data.length,
+      aggregationMethod: aggMethod,
+    });
+    const blob = new Blob([svgDocument], { type: 'image/svg+xml;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
@@ -166,10 +175,7 @@ export const DataChart: React.FC<DataChartProps> = ({
   };
 
   return (
-    <div
-      ref={chartContainerRef}
-      className="p-4 sm:p-5 rounded-xl border transition-colors duration-fast bg-surface border-border-subtle shadow-2xs animate-chart-enter"
-    >
+    <div className="p-4 sm:p-5 rounded-xl border transition-colors duration-fast bg-surface border-border-subtle shadow-2xs animate-chart-enter">
       {/* Top Header & Chart Studio Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-border-subtle">
         <div>

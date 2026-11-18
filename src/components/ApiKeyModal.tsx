@@ -424,7 +424,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
             )}
             {!key && (
               <span className="text-xs text-text-muted">
-                Key optional: Prebuilt datasets support instant verified queries
+                Key optional: the suggested demo questions run verified queries locally; custom questions need a key.
               </span>
             )}
           </div>

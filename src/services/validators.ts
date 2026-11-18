@@ -775,11 +775,15 @@ export function validateSqlIntent(
     const firstOrderDirection = trimmedSql.match(/\border\s+by\b[\s\S]*?\b(asc|desc)\b/i)?.[1]?.toUpperCase();
     const asksDescending = /\b(top|highest|most|greatest|largest|biggest)\b/.test(lowerQ);
     const asksAscending = /\b(bottom|lowest|least|smallest|fewest)\b/.test(lowerQ);
+    // ranking_direction is optional on a plan; constructSqlFromPlan and the plan explanation both
+    // resolve an omitted direction to DESC, so this check must read the same default instead of
+    // rejecting SQL that faithfully implements the plan.
+    const planDirection = plan.ranking_direction ?? 'DESC';
 
     if (firstOrderDirection) {
-      if (isRanking && plan.ranking_direction !== firstOrderDirection) {
+      if (isRanking && planDirection !== firstOrderDirection) {
         errors.push(
-          `Intent Validation Error: The query plan requires ${plan.ranking_direction} order, but the first ORDER BY term is ${firstOrderDirection}.`
+          `Intent Validation Error: The query plan requires ${planDirection} order, but the first ORDER BY term is ${firstOrderDirection}.`
         );
       } else if (asksDescending && asksAscending) {
         // "highest to lowest", "highest and lowest" — one ORDER BY cannot satisfy both.

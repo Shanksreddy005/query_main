@@ -382,7 +382,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                 </div>
 
                 <p className="text-[10.5px] text-text-muted">
-                  Key optional for demo: preloaded datasets support verified queries keyless.
+                  Key optional for demo: the suggested questions on preloaded datasets run verified queries locally.
+                  Custom questions, uploads and free-text follow-ups need a provider key.
                 </p>
               </div>
 

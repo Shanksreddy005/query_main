@@ -928,6 +928,7 @@ ORDER BY total_units_sold DESC`;
             dimensions: ['product', 'category'],
             metric: 'profit',
             aggregation: 'SUM',
+            ranking_direction: 'DESC',
             limit: 5,
             explanation: `Top 5 products in category "${categoryMatch}" by net profit`,
           },
@@ -976,6 +977,116 @@ ORDER BY total_units_sold DESC`;
           categoryLabel: 'Region',
           metricLabel: 'Total Profit',
         },
+        usedProvider: 'QueryMind Verified Blueprint Engine',
+      };
+    }
+
+    // Products whose cumulative profit is negative, with the discounting that explains it
+    const isUnprofitableProductAudit =
+      normQ.includes('product') &&
+      !normQ.includes('order') &&
+      normQ.includes('profit') &&
+      normQ.includes('discount') &&
+      (normQ.includes('negative') || normQ.includes('loss') || normQ.includes('unprofitable'));
+
+    if (isUnprofitableProductAudit && hasColumns('discount_pct')) {
+      const sql = `SELECT product, category, COUNT(*) AS order_count, ROUND(SUM(sales), 2) AS total_sales, ROUND(SUM(profit), 2) AS total_profit, ROUND((SUM(profit) / NULLIF(SUM(sales), 0)) * 100, 1) AS margin_pct, ROUND(AVG(discount_pct) * 100, 1) AS avg_discount_pct FROM ${t} GROUP BY product, category HAVING SUM(profit) < 0 ORDER BY total_profit ASC`;
+      return {
+        sql,
+        queryPlan: {
+          intent: 'aggregate_by_dimension',
+          dimensions: ['product', 'category'],
+          metric: 'profit',
+          aggregation: 'SUM',
+          explanation: 'Loss-making products with their margin and average discount rate',
+        },
+        reasoningSteps: [
+          { title: 'Intent Understanding', detail: 'Loss audit requested: products whose summed profit is negative', status: 'done' },
+          { title: 'Semantic Schema Grounding', detail: 'Dimension: product + category, Metrics: profit, sales, discount_pct', status: 'done' },
+          { title: 'SQL Blueprint Mapping', detail: 'GROUP BY product, category with HAVING SUM(profit) < 0', status: 'done' },
+        ],
+        insight: placeholderInsight,
+        chartSuggestion: {
+          type: 'horizontal_bar',
+          xAxisKey: 'product',
+          yAxisKey: 'total_profit',
+          title: 'Products With Negative Total Profit',
+          categoryLabel: 'Product',
+          metricLabel: 'Total Profit',
+        },
+        usedProvider: 'QueryMind Verified Blueprint Engine',
+      };
+    }
+
+    // Category performance comparison (sales, profit and margin per category)
+    const isCategoryPerformance =
+      normQ.includes('category') &&
+      normQ.includes('profit') &&
+      (normQ.includes('performance') || normQ.includes('compare') || normQ.includes('breakdown'));
+
+    if (isCategoryPerformance) {
+      const sql = `SELECT category, COUNT(*) AS order_count, ROUND(SUM(sales), 2) AS total_sales, ROUND(SUM(profit), 2) AS total_profit, ROUND((SUM(profit) / NULLIF(SUM(sales), 0)) * 100, 1) AS margin_pct FROM ${t} GROUP BY category ORDER BY total_profit DESC`;
+      return {
+        sql,
+        queryPlan: {
+          intent: 'aggregate_by_dimension',
+          dimensions: ['category'],
+          metric: 'profit',
+          aggregation: 'SUM',
+          explanation: 'Category-level sales, profit and margin ranked by profit',
+        },
+        reasoningSteps: [
+          { title: 'Intent Understanding', detail: 'Category comparison requested across sales and profit', status: 'done' },
+          { title: 'Semantic Schema Grounding', detail: 'Dimension: category, Metrics: sales, profit', status: 'done' },
+          { title: 'SQL Blueprint Mapping', detail: 'GROUP BY category ORDER BY total_profit DESC', status: 'done' },
+        ],
+        insight: placeholderInsight,
+        chartSuggestion: {
+          type: 'bar',
+          xAxisKey: 'category',
+          yAxisKey: 'total_profit',
+          title: 'Category Performance By Total Profit',
+          categoryLabel: 'Category',
+          metricLabel: 'Total Profit',
+        },
+        usedProvider: 'QueryMind Verified Blueprint Engine',
+      };
+    }
+
+    // Record-level discount/profit audit at an explicit discount threshold. The threshold is read
+    // as a percent because normQ strips punctuation, so a fractional phrasing ("above 0.15") would
+    // read as "0"; that case is left to the provider path instead of becoming a wrong filter.
+    const discountThresholdMatch = normQ.match(
+      /discount[a-z]*\s+(?:greater than|more than|above|over|exceeding|at least)\s+(\d+)/
+    );
+    const discountThresholdPct = discountThresholdMatch ? Number(discountThresholdMatch[1]) : NaN;
+    const isOrderDiscountAudit =
+      Number.isFinite(discountThresholdPct) &&
+      discountThresholdPct > 0 &&
+      normQ.includes('order') &&
+      normQ.includes('profit') &&
+      normQ.includes('negative');
+
+    if (isOrderDiscountAudit && hasColumns('discount_pct', 'order_id')) {
+      const threshold = discountThresholdPct / 100;
+      const sql = `SELECT order_id, customer_name, region, category, product, order_date, sales, quantity, discount_pct, profit FROM ${t} WHERE discount_pct > ${threshold} AND profit < 0 ORDER BY profit ASC`;
+      return {
+        sql,
+        queryPlan: {
+          intent: 'filter_lookup',
+          dimensions: ['order_id'],
+          filters: [
+            { column: 'discount_pct', operator: '>', value: threshold },
+            { column: 'profit', operator: '<', value: 0 },
+          ],
+          explanation: `Orders discounted above ${(threshold * 100).toFixed(0)}% that sold at a loss`,
+        },
+        reasoningSteps: [
+          { title: 'Intent Understanding', detail: 'Record-level audit requested: individual loss-making discounted orders', status: 'done' },
+          { title: 'Semantic Schema Grounding', detail: `Conditions: discount_pct > ${threshold}, profit < 0`, status: 'done' },
+          { title: 'SQL Blueprint Mapping', detail: 'Filtered detail rows without aggregation, worst margin first', status: 'done' },
+        ],
+        insight: placeholderInsight,
         usedProvider: 'QueryMind Verified Blueprint Engine',
       };
     }
