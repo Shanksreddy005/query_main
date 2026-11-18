@@ -28,6 +28,7 @@ secrets*.json
 # Verification scratch files, logs and local tooling
 .verify-*/
 .verify-*
+.wrangler/
 *.log
 npm-debug.log*
 .aistudio/
