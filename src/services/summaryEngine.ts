@@ -345,6 +345,225 @@ function selectCurrencySources(sql: string, columns: string[], semanticSchema?: 
   return sources;
 }
 
+/** Matches a measure named directly inside one aggregate call, e.g. SUM(profit) or COUNT(DISTINCT order_id). */
+function directAggregateOn(token: string): RegExp {
+  return new RegExp(`\\b(?:sum|avg|min|max|count|median|stddev|variance)\\s*\\(\\s*(?:distinct\\s+)?"?${token}"?\\s*\\)`, 'i');
+}
+
+/** Splits an ORDER BY list on its top-level commas, ignoring commas inside calls and quoted names. */
+function splitTopLevelTerms(clause: string): string[] {
+  const terms: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let current = '';
+  for (const ch of clause) {
+    if (quote) {
+      current += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') quote = ch;
+    else if (ch === '(') depth++;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    if (ch === ',' && depth === 0) {
+      terms.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim()) terms.push(current);
+  return terms;
+}
+
+/** Parenthesis depth at one offset, ignoring brackets inside quoted text. */
+function parenDepthAt(text: string, offset: number): number {
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = 0; i < offset; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') quote = ch;
+    else if (ch === '(') depth++;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+  }
+  return depth;
+}
+
+interface OrderByTerm {
+  text: string;
+  direction: 'ASC' | 'DESC';
+  depth: number;
+}
+
+/**
+ * Every ORDER BY term in the statement, tagged with its nesting depth. The outer clause is what the
+ * result arrives in, but a per-group ranking declares its measure inside a window function, so the
+ * caller needs both instead of trusting whichever ORDER BY appears first. SQL sorts ascending when
+ * no direction keyword is written.
+ */
+function collectOrderByTerms(sql: string): OrderByTerm[] {
+  const terms: OrderByTerm[] = [];
+  const pattern = /\border\s+by\b/gi;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(sql))) {
+    const depth = parenDepthAt(sql, match.index);
+    const start = match.index + match[0].length;
+    let end = sql.length;
+    let level = depth;
+    let quote: string | null = null;
+    for (let i = start; i < sql.length; i++) {
+      const ch = sql[i];
+      if (quote) {
+        if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === "'" || ch === '"') quote = ch;
+      else if (ch === '(') level++;
+      else if (ch === ')') {
+        if (level <= depth) {
+          end = i;
+          break;
+        }
+        level--;
+      } else if (level === depth) {
+        if (ch === ';') {
+          end = i;
+          break;
+        }
+        // Only a clause keyword sitting at this nesting level ends the list; the same word inside a
+        // term ("ORDER BY name DESC LIMIT" versus a column named "monthly_limit") must not.
+        if (/^\s(?:limit|offset|fetch|window)\b/i.test(sql.slice(i))) {
+          end = i;
+          break;
+        }
+      }
+    }
+    for (const raw of splitTopLevelTerms(sql.slice(start, end))) {
+      const text = raw.trim();
+      if (!text) continue;
+      terms.push({
+        text,
+        direction: /\bdesc\b/i.test(text) ? 'DESC' : 'ASC',
+        depth,
+      });
+    }
+  }
+  return terms.sort((a, b) => a.depth - b.depth);
+}
+
+/**
+ * Aliases the SQL assigns to a window row counter (ROW_NUMBER(), RANK(), ...). They number rows; they
+ * are never the measure a ranking is about, so "ranked by rank" cannot be produced from them.
+ */
+function windowOrdinalAliases(sql: string): Set<string> {
+  const aliases = new Set<string>();
+  for (const { expr, alias } of parseSelectExpressions(sql)) {
+    if (alias && /\b(row_number|rank|dense_rank|percent_rank|cume_dist|ntile)\s*\(\s*\)\s*over\b/i.test(expr)) {
+      aliases.add(alias.toLowerCase());
+    }
+  }
+  return aliases;
+}
+
+export interface RankedMetricResolution {
+  /** The returned column the executed query sorted on, when exactly one measure matches a term. */
+  column?: string;
+  /** Present only when an ORDER BY term was found; its absence means the rows carry no proven order. */
+  direction?: 'ASC' | 'DESC';
+  /** Where the column came from: an ORDER BY term, a projection that term points at, or the plan. */
+  basis: 'order_by' | 'projection' | 'plan_metric' | 'unresolved';
+}
+
+/**
+ * Names the measure a ranked result was sorted on. The executed ORDER BY is the record of that
+ * choice, so it decides, and only a column holding a numeric measure can be named. A term that maps
+ * onto several returned columns stays unresolved instead of being guessed, because describing a
+ * profit ranking as a sales ranking is a false claim about the analysis. The plan's metric is
+ * consulted only when the statement has no ORDER BY at all, where it can name a measure but never a
+ * leader.
+ *
+ * @param isMeasure reports whether a returned column carries a measure, so only one can be named; it
+ *        comes from the result profile, never from a column's spelling. Omitting it resolves at the
+ *        SQL level only and treats every returned column as nameable.
+ */
+export function resolveRankedMetricColumn(
+  sql: string,
+  columns: string[],
+  plan?: QueryPlan,
+  isMeasure: (column: string) => boolean = () => true
+): RankedMetricResolution {
+  const returnedColumn = (name: string | null | undefined): string | undefined =>
+    name ? columns.find((c) => c.toLowerCase() === String(name).toLowerCase()) : undefined;
+  const ordinals = windowOrdinalAliases(sql);
+  const isOrdinal = (column: string) => ordinals.has(column.toLowerCase());
+  // A window row counter repeats the aggregates it ranks on inside its own OVER clause, so its
+  // expression must not count as another projection of that measure.
+  const projections = parseSelectExpressions(sql).filter((p) => returnedColumn(p.alias) && !isOrdinal(p.alias as string));
+  const uniqueAggregateTarget = (token: string): string | undefined => {
+    const hits = new Set(
+      projections.filter((p) => directAggregateOn(token).test(p.expr)).map((p) => returnedColumn(p.alias) as string)
+    );
+    return hits.size === 1 ? Array.from(hits)[0] : undefined;
+  };
+  const fromTerm = (term: string): { column: string; basis: 'order_by' | 'projection' } | undefined => {
+    const core = term.replace(/\b(?:asc|desc|nulls\s+first|nulls\s+last)\b/gi, ' ').trim();
+    if (!core) return undefined;
+    // "ORDER BY 3" counts the projected outputs, so the position maps straight onto a returned column.
+    if (/^\d+$/.test(core)) {
+      const positional = columns[Number(core) - 1];
+      return positional ? { column: positional, basis: 'order_by' } : undefined;
+    }
+    const identifier = core.replace(/"/g, '').match(/^(?:[A-Za-z_][\w$]*\.)?([A-Za-z_][\w$]*)$/);
+    if (identifier) {
+      const direct = returnedColumn(identifier[1]);
+      if (direct) return { column: direct, basis: 'order_by' };
+      // A source column named in ORDER BY reaches the result through the aggregate that consumed it.
+      const derived = uniqueAggregateTarget(identifier[1]);
+      return derived ? { column: derived, basis: 'projection' } : undefined;
+    }
+    const normalized = core.replace(/\s+/g, '').toLowerCase();
+    const hits = new Set(
+      projections
+        .filter((p) => p.expr.replace(/\s+/g, '').toLowerCase().includes(normalized))
+        .map((p) => returnedColumn(p.alias) as string)
+    );
+    return hits.size === 1 ? { column: Array.from(hits)[0], basis: 'projection' } : undefined;
+  };
+
+  const terms = collectOrderByTerms(sql);
+  const resolved = terms
+    .map((term) => {
+      const hit = fromTerm(term.text);
+      return hit ? { ...hit, direction: term.direction } : undefined;
+    })
+    .filter((hit): hit is { column: string; basis: 'order_by' | 'projection'; direction: 'ASC' | 'DESC' } => Boolean(hit));
+
+  const measure = resolved.find((hit) => isMeasure(hit.column) && !isOrdinal(hit.column));
+  if (measure) return { column: measure.column, direction: measure.direction, basis: measure.basis };
+
+  // The query sorted on a column that carries no measure (a name, an id, a partition key). That is a
+  // fact about the executed SQL, so it outranks the plan's metric instead of being renamed by it.
+  const namedTerm = resolved.find((hit) => !isOrdinal(hit.column));
+  if (namedTerm) return { column: namedTerm.column, direction: namedTerm.direction, basis: namedTerm.basis };
+
+  // Only an unordered result leaves the plan as the record of what was measured. It names the metric
+  // but not an order, so the caller cannot claim a leader from the row sequence.
+  if (!terms.length && plan?.metric) {
+    const direct = returnedColumn(plan.metric);
+    if (direct) return { column: direct, basis: 'plan_metric' };
+    const derived = uniqueAggregateTarget(String(plan.metric).replace(/\s+/g, '_').toLowerCase());
+    if (derived) return { column: derived, basis: 'plan_metric' };
+  }
+
+  // A term the projection cannot pin to one column, or a sort on a row counter alone: unknown, and
+  // unknown gets reported as unknown.
+  return resolved.length || terms.length ? { direction: terms[0]?.direction, basis: 'unresolved' } : { basis: 'unresolved' };
+}
+
 function profileColumns(columns: string[], rows: Record<string, any>[]): ColumnProfile {
   const sample = rows[0] || {};
   const numericCols = columns.filter((c) => typeof sample[c] === 'number');
@@ -1807,33 +2026,19 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
   // STRATEGY 5: RANKING AND TOP-N WITH EXACT TIE HANDLING
   // =========================================================================
   else if (category === 'ranking_top_n') {
-    const plannedMetric = queryPlan?.metric;
-    const escapedMetric = plannedMetric?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const metricAlias = escapedMetric
-      ? sql.match(new RegExp(`(?:SUM|AVG|MIN|MAX|COUNT)\\s*\\(\\s*"?${escapedMetric}"?\\s*\\)\\s+AS\\s+"?([a-zA-Z_][\\w]*)`, 'i'))?.[1]
-      : undefined;
-    const plannedColumn = profile.numericCols.find((c) => c.toLowerCase() === metricAlias?.toLowerCase())
-      || profile.numericCols.find((c) => c.toLowerCase() === plannedMetric?.toLowerCase());
-    const rankMetricCol = plannedColumn || profile.totalRevenueCol || profile.avgRevenueCol || profile.numericCols.find((c) => {
-      const l = c.toLowerCase();
-      return l.includes('mrr') || l.includes('sales') || l.includes('profit') || l.includes('sold') || l.includes('quantity') || l.includes('tickets');
-    }) || profile.numericCols[0] || columns[1] || columns[0];
-
     const entityCol = profile.entityCol || columns[0];
     const dimCol = profile.dimensionCol;
 
-    // The executed ORDER BY is the only record of what the result is actually sorted on.
-    // Falling back to a revenue column here invents a ranking the query never performed.
-    const orderToken = (sql.match(/\border\s+by\b\s+"?([a-zA-Z_][\w]*)"?/i) || [])[1];
-    const orderCol = orderToken ? columns.find((c) => c.toLowerCase() === orderToken.toLowerCase()) : undefined;
-    if (orderCol && !profile.numericCols.includes(orderCol)) {
-      const orderDir = (sql.match(/\border\s+by\b[\s\S]{0,60}?\b(asc|desc)\b/i) || [])[1];
+    const ranked = resolveRankedMetricColumn(sql, columns, queryPlan, (column) => profile.numericCols.includes(column));
+    const rankMetricCol = ranked.column;
+    const metricLabel = rankMetricCol ? rankMetricCol.replace(/_/g, ' ') : '';
+
+    // A name or ID column in ORDER BY sorts records; it ranks no measure, however the plan reads.
+    if (rankMetricCol && ranked.direction && !profile.numericCols.includes(rankMetricCol)) {
       return buildLegacyPayload({
         status: 'verified',
         category,
-        overview: `${rows.length} ${rows.length === 1 ? entity.singular : entity.plural} were returned sorted by ${orderCol.replace(/_/g, ' ')}${
-          orderDir ? ` in ${orderDir.toUpperCase()} order` : ''
-        }. This query applied no aggregate, so no metric was ranked.`,
+        overview: `${rows.length} ${rows.length === 1 ? entity.singular : entity.plural} were returned sorted by ${rankMetricCol.replace(/_/g, ' ')} in ${ranked.direction} order. ${rankMetricCol.replace(/_/g, ' ')} holds no numeric measure, so nothing was ranked by it.`,
         key_findings: rows.slice(0, 6).map((row) => ({
           finding: `${row[entityCol]}: ${columns
             .filter((c) => c !== entityCol)
@@ -1848,9 +2053,44 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
           rows.length > 6
             ? `${rows.length} rows were returned; the first 6 are listed here and the rest appear in the result table.`
             : 'This is an ordering of stored records, not a ranking by any measured value.',
-          `The ${orderCol.replace(/_/g, ' ')} column holds no numeric measure, so no performance comparison can be drawn from this result alone.`,
+          `The ${rankMetricCol.replace(/_/g, ' ')} column holds no numeric measure, so no performance comparison can be drawn from this result alone.`,
         ],
       });
+    }
+
+    // An ID column alone ("C005") is unreadable when the query also returned the record's name.
+    const nameCol = columns.find(
+      (c) => c !== entityCol && /(^|_)name$/i.test(c) && rows.every((r) => typeof r[c] === 'string' || r[c] == null)
+    );
+    const labelOf = (row: Record<string, any>): string =>
+      nameCol && row[nameCol] ? `${row[nameCol]} (${row[entityCol]})` : String(row[entityCol] ?? 'Record');
+
+    // Without an identified measure the honest answer is the values that came back, not a
+    // confidently named metric.
+    const neutralRanking = (reason: string) =>
+      buildLegacyPayload({
+        status: 'verified',
+        category,
+        overview: `${rows.length} ${rows.length === 1 ? entity.singular : entity.plural} were returned by a ranked query; ${reason}. This summary reports the returned values and names no ranked metric.`,
+        key_findings: rows.slice(0, 6).map((row) => ({
+          finding: `${labelOf(row)}: ${profile.numericCols
+            .map((c) => `${c.replace(/_/g, ' ')} = ${formatMetricValue(row[c], c)}`)
+            .join(', ') || 'no numeric measure in the returned row'}.`,
+          evidence: (profile.numericCols.length ? profile.numericCols : columns).map((c) => `${c}=${row[c]}`).join(', '),
+          importance: 'high' as const,
+        })),
+        business_implications: [],
+        recommended_actions: [],
+        limitations: [
+          'No leader, gap or share-of-total claim is made, because the summary cannot identify the measure this result was ranked on.',
+          'Sort on a single aggregate alias (for example ORDER BY total_profit DESC) to get a ranked narrative.',
+        ],
+      });
+
+    if (!rankMetricCol) {
+      return neutralRanking(ranked.direction
+        ? 'the term in the executed ORDER BY does not resolve to one returned measure'
+        : 'neither the executed SQL nor the query plan identifies a measure that this result ranked on');
     }
 
     if (queryPlan?.intent === 'top_n_per_group') {
@@ -1873,6 +2113,10 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
         limitations: ['Rankings are within each group; they do not establish a global ranking or revenue concentration.'],
       });
     }
+
+    // A first row is only a leader when the query asked for an order; without an ORDER BY term the
+    // row sequence carries no ranking claim.
+    if (!ranked.direction) return neutralRanking('the executed SQL carries no ORDER BY term');
 
     // Detect exact ties in the result set
     const valueCounts = new Map<number, string[]>();
@@ -1926,15 +2170,7 @@ export function generateEvidenceBasedSummary(ctx: SummaryContext): QueryInsight 
       });
     }
 
-    // An ID column alone ("C005") is unreadable when the query also returned the record's name.
-    const nameCol = columns.find(
-      (c) => c !== entityCol && /(^|_)name$/i.test(c) && rows.every((r) => typeof r[c] === 'string' || r[c] == null)
-    );
-    const labelOf = (row: Record<string, any>): string =>
-      nameCol && row[nameCol] ? `${row[nameCol]} (${row[entityCol]})` : String(row[entityCol] ?? 'Record');
-    const metricLabel = rankMetricCol.replace(/_/g, ' ');
-    const sqlDirection = (sql.match(/\border\s+by\b\s+"?[a-zA-Z_][\w]*"?\s+(asc|desc)\b/i) || [])[1]?.toUpperCase();
-    const ascending = sqlDirection === 'ASC';
+    const ascending = ranked.direction === 'ASC';
 
     const runnerUpRow = rows.length > 1 ? rows[1] : null;
     const leaderName = labelOf(leaderRow);

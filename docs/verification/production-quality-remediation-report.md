@@ -190,7 +190,7 @@ I did not open or change any Cloudflare setting. To remove the injected analytic
 
 | Finding | Why it is not fixed here |
 |---|---|
-| The executive summary can mislabel the ranked metric ("5 orders were ranked by total sales … leads with $3,798" for a profit-ranked plan) | summary wording only, no effect on the verified numbers; it needs its own careful fix plus tests so the metric name is derived from the plan |
+| The executive summary could mislabel the ranked metric ("5 orders were ranked by total sales … leads with $3,798" for a profit-ranked plan) | **Closed after this report was written.** The metric is now read from the executed query instead of inferred, with `tests/ranking_metric_label.test.ts` holding the fix; the row is kept as the finding that scoped that work |
 | The icon-only Upload button has no accessible name below 640 px | a11y polish, no functional impact; out of the three-defect scope |
 | Sidebar "Zero telemetry · In-memory DuckDB", the header "no app telemetry" tooltip and the auditor self-hosting sentence | must be reconciled with the live measurement in step D, not before |
 
