@@ -6,6 +6,8 @@ interface LogoProps {
   variant?: 'horizontal' | 'stacked' | 'icon-only';
   theme?: 'dark' | 'light';
   isDarkMode?: boolean;
+  // Lets narrow headers keep the mark while the wordmark yields to controls that matter more.
+  wordmarkClassName?: string;
 }
 
 export const QueryMindLogo: React.FC<LogoProps> = ({
@@ -13,6 +15,7 @@ export const QueryMindLogo: React.FC<LogoProps> = ({
   size = 32,
   variant = 'horizontal',
   isDarkMode = true,
+  wordmarkClassName = '',
 }) => {
   const gridColor = isDarkMode ? '#F4F4F2' : '#141418';
   const violetColor = isDarkMode ? '#8B7FF5' : '#5B4BE8';
@@ -79,7 +82,7 @@ export const QueryMindLogo: React.FC<LogoProps> = ({
     <div className={`inline-flex items-center gap-2.5 select-none ${className}`}>
       {mark}
       <div
-        className="text-[19px] tracking-tight leading-none"
+        className={`text-[19px] tracking-tight leading-none ${wordmarkClassName}`}
         style={{ color: textColor }}
       >
         <span className="font-bold">Query</span>

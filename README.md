@@ -1,8 +1,8 @@
 # QueryMind
 
-Browser-native natural-language analytics: upload a CSV, ask a question in plain English, and get validated SQL, a locally executed DuckDB-WASM result, a chart and an evidence-grounded summary — privacy-first, bring-your-own-key, zero backend.
+Browser-native natural-language analytics: upload a CSV, ask a question in plain English, and get validated SQL, a locally executed DuckDB-WASM result, a chart and an evidence-grounded summary — bring-your-own-key, with no backend of QueryMind's own.
 
-**Release status:** v1.0 — APPROVED FOR PUBLICATION. 301/301 tests, byte-for-byte reproducible build, real-provider verification on Google Gemini and Groq (see [docs/verification/](docs/verification/README.md)).
+**Release status:** v1.2 — deployed and live-verified on `https://querymind.in` (2026-11-19; that deployed tree ran 349 tests / 91 suites). The current working tree runs 435 tests / 111 suites with a byte-for-byte reproducible build. Real-provider verification on Google Gemini and Groq was completed in the earlier release passes, and the live browser verification of the deployed bundle, the R2 engine binaries, keyless demo behaviour and the ranked-summary fix is recorded in [docs/verification/v1.2-live-production-verification.md](docs/verification/v1.2-live-production-verification.md).
 
 ## How it works
 
@@ -13,19 +13,21 @@ The LLM is a semantic planner only. Every plan must pass a deterministic validat
 ```bash
 npm ci            # clean install
 npm run dev       # dev server on http://localhost:3000
-npm test          # 301 tests / 83 suites
+npm test          # 435 tests / 111 suites
 npm run build     # production build → dist/
 npm run preview   # serve dist/ at http://127.0.0.1:4173
 ```
 
-**Provider key (BYOK):** open Settings (gear icon) → pick Gemini / Groq / OpenAI → paste your key → **Test Key** → **Save Configuration**. Keys live in tab memory unless you opt in to "Remember API key". `.env.example` contains placeholder-only variables; never commit real keys. Bundled verified sample queries work without a key.
+**Provider key (BYOK):** open Settings (gear icon) → pick Gemini / Groq / OpenAI → paste your key → **Test Key** → **Save Configuration**. Keys live in tab memory unless you opt in to "Remember API key". `.env.example` contains placeholder-only variables; never commit real keys. Bundled verified sample queries work without a key — on the deployed v1.2 build they are answered locally, with no provider request made.
 
 ## Repository layout
 
 ```
 ├── src/            Application code (components, services, config)
-├── public/         Self-hosted assets: DuckDB-WASM engine, fonts
-├── tests/          15 test files — the deterministic contract, provider transport,
+├── public/         First-party assets: DuckDB-WASM worker scripts and engine binaries, fonts
+│                   (in production the two oversized .wasm binaries are served from the
+│                   operator's R2 domain rather than uploaded to Pages)
+├── tests/          19 test files — the deterministic contract, provider transport,
 │                   memory cleanup, summary correctness, security regressions
 ├── docs/           Engineering documentation
 │   ├── ARCHITECTURE.md     Pipeline and module map
@@ -55,7 +57,7 @@ npm run preview   # serve dist/ at http://127.0.0.1:4173
 | [docs/PRIVACY.md](docs/PRIVACY.md) | What is (and is never) transmitted to providers; BYOK threat model. |
 | [docs/TESTING.md](docs/TESTING.md) | Test inventory and regression policy. |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Reproducible builds, hosting options, deployment checklists. |
-| [docs/verification/README.md](docs/verification/README.md) | Audit → verification → production approval → smoke test → sign-off. |
+| [docs/verification/README.md](docs/verification/README.md) | Audit → verification → production approval → smoke test → R2 remediation → production-quality remediation → v1.2 release candidate → v1.2 live verification → sign-off. |
 
 ## Contributing
 

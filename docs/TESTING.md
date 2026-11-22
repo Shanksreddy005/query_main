@@ -9,7 +9,7 @@ npm test          # full suite: tsx --test tests/*.test.ts
 npm run build     # production build (must succeed with tests green)
 ```
 
-**Verified release status:** 301 tests / 83 suites / 301 pass / 0 fail, type check clean, build reproducible byte-for-byte (see [verification/release-sign-off.md](verification/release-sign-off.md)).
+**Verified working-tree status (2026-11-22):** 435 tests / 111 suites / 19 test files / 0 fail; type check clean; production build succeeds. The earlier v1.0 release sign-off recorded 301 tests / 83 suites on 2026-11-17 — a historical measurement preserved in [verification/release-sign-off.md](verification/release-sign-off.md).
 
 ## Test inventory (`tests/`)
 

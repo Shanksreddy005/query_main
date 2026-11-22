@@ -1,6 +1,6 @@
 # QueryMind — Architecture
 
-QueryMind is a browser-native natural-language analytics engine: upload a CSV, ask a question in plain English, and receive SQL, a verified DuckDB result, a chart and an evidence-grounded summary — with no backend and no dataset ever leaving the machine.
+QueryMind is a browser-native natural-language analytics engine: upload a CSV, ask a question in plain English, and receive SQL, a verified DuckDB result, a chart and an evidence-grounded summary — with no backend of QueryMind's own. Dataset rows and query results stay in the browser; on the provider path the application sends the question plus structural column metadata, and [PRIVACY.md](PRIVACY.md) states exactly which parts of that boundary are verified by tests, by live provider audits, and by the 2026-11-19 live keyless measurement.
 
 ## Core principle
 
@@ -12,15 +12,15 @@ The LLM is a **semantic planner only**. It never executes anything and is never 
 4. **Deterministic validation contract** — the returned SQL must pass named checks (read-only safety, target table verified, grouping/ordering/limit verified against the request, row-count and integrity checks) before it is allowed to execute. Invalid plans trigger bounded self-correction (repair rounds) rather than guesswork.
 5. **DuckDB-WASM execution** — the validated SQL runs locally, in-memory.
 6. **Re-validation and evidence-grounded summary** — every number, share and ranking sentence in the executive summary is computed from the executed result set; formatting (currency, percentages) is derived from the SQL projections, not from provider prose.
-7. **Deterministic visualization** — the chart type is chosen by rules from the result shape, and chart labels state "share of the values shown" when the result is a subset.
+7. **Deterministic visualization** — the chart type is chosen by rules from the result shape, and chart labels state "share of the values shown" when the result is a subset. Chart Studio opens automatically only for results with more than one row and offers no chart toggle for a single-row result — one point is not a series; those values appear in the answer band when they fit within four columns, otherwise in the data table.
 
 ## Key guarantees
 
-- **Verified labels are earned**: a result is only marked "QUERY MATCHES REQUEST (n CHECKS PASSED)" when the deterministic contract has actually passed on the executed SQL.
+- **Verified labels are earned**: a result is only marked **Verified** when the deterministic contract has actually passed on the executed SQL. The badge's tooltip reads "Executed SQL answers this request · N integrity checks passed" (or "Executed SQL answers this request" when no check list is attached), and the same check count appears separately in the answer band's facts row.
 - **Fallback answers are labelled**: if no provider plan passes validation after bounded rounds, a blueprint fallback is shown explicitly as "Blueprint SQL · no provider reply passed validation" — never as an AI answer.
 - **BYOK**: API keys are entered in the Settings panel and held in tab memory by default; the optional "Remember API key" checkbox is opt-in. Keys are sent only as headers to the selected provider endpoint.
-- **Self-hosted assets**: DuckDB-WASM bundles and fonts ship from the app itself (`public/duckdb/`, `public/fonts/`); no CDN is contacted at runtime.
-- **Outbound telemetry is auditable**: the built-in Telemetry Auditor records every outbound request (URL, body size, status) without recording credentials, and can be inspected live from the UI.
+- **First-party asset hosts**: fonts and the DuckDB-WASM worker scripts ship from the app itself (`public/fonts/`, `public/duckdb/`); the two oversized `.wasm` binaries are served from the operator's own Cloudflare R2 custom domain `assets.querymind.in`, because they exceed the Pages per-file limit. No URL in the built application points at a third-party or public CDN asset host. On the deployed v1.2 build, the page frame's cold load requested only the Pages origin (HTML, JS, CSS and two fonts, plus one same-origin `blob:` entry); the engine binaries are fetched by the DuckDB worker from the R2 domain, which is what the live content-type, CORS and byte-count checks plus successful local execution establish. One qualification, recorded in full in [verification/v1.2-live-production-verification.md](verification/v1.2-live-production-verification.md): the hosting edge can inject its own analytics script into the served HTML, and one capture in that pass showed it happening, so "the application contacts no third-party asset host" is a statement about QueryMind's code and artifacts, not a guarantee about every byte a visitor's browser receives from `querymind.in`.
+- **Provider dispatch is auditable**: the built-in Telemetry Auditor records every LLM request the app dispatches (URL, body size, status) without recording credentials, and can be inspected live from the UI. It is a provider-payload audit, not a full network monitor — engine and asset fetches are outside its scope, and it shows an empty record while the app is running keyless.
 
 ## Module map (`src`)
 

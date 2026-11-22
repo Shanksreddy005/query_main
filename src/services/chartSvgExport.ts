@@ -26,7 +26,7 @@ export const LIGHT_CHART_EXPORT_THEME: ChartExportTheme = {
   borderStrong: '#C9C2B6',
   textPrimary: '#1C1917',
   textSecondary: '#44403C',
-  textMuted: '#78716C',
+  textMuted: '#6E6760',
   accent: '#D97706',
 };
 
@@ -136,6 +136,71 @@ function valueTicks(req: ChartExportRequest, maxValue: number): string {
   return ticks.join('\n  ');
 }
 
+/**
+ * Inside-bar value labels are painted on the categorical fill, which itself is drawn translucently
+ * over the track, so their contrast has to be judged against that blend and not against the palette
+ * stop. 13px labels are WCAG normal text, which needs 4.5:1.
+ */
+const BAR_FILL_OPACITY = 0.85;
+const AA_NORMAL_TEXT = 4.5;
+/** Selected only when neither theme text colour clears the threshold on a mid-tone fill. */
+const MAX_CONTRAST_INK = '#000000';
+
+function channelLinear(hex: string, at: number): number {
+  const channel = parseInt(hex.slice(at, at + 2), 16) / 255;
+  return channel <= 0.04045 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
+}
+
+function luminance(hex: string): number {
+  return (
+    0.2126 * channelLinear(hex, 1) + 0.7152 * channelLinear(hex, 3) + 0.0722 * channelLinear(hex, 5)
+  );
+}
+
+function contrastRatio(foreground: string, background: string): number {
+  const [lighter, darker] = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+/** What the translucent bar actually paints: the palette stop blended onto the track behind it. */
+function compositedBarFill(barColor: string, track: string): string {
+  const blend = (at: number) =>
+    Math.round(
+      BAR_FILL_OPACITY * parseInt(barColor.slice(at, at + 2), 16) +
+        (1 - BAR_FILL_OPACITY) * parseInt(track.slice(at, at + 2), 16)
+    );
+  return `#${[1, 3, 5].map((at) => blend(at).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** Selects the theme ink for a background, using black only when neither theme colour clears AA. */
+function preferredInkOn(background: string, theme: ChartExportTheme): string {
+  const preferred =
+    contrastRatio(theme.textPrimary, background) >= contrastRatio(theme.surface, background)
+      ? theme.textPrimary
+      : theme.surface;
+  return contrastRatio(preferred, background) >= AA_NORMAL_TEXT ? preferred : MAX_CONTRAST_INK;
+}
+
+/**
+ * The theme's own text colours are preferred and used whenever one of them clears AA, which keeps
+ * the warm ink and near-white labels in place for most of the ramp; black is only selected on the
+ * mid-tone hues where every theme colour fails. Dark-theme documents keep `surface` everywhere.
+ */
+function insideBarLabelFill(barColor: string, theme: ChartExportTheme): string {
+  return preferredInkOn(compositedBarFill(barColor, theme.surfaceSecondary), theme);
+}
+
+/**
+ * Trend point labels sit above the line on the bare plot surface — the area fill is always below
+ * the line — so the accent is kept where it already clears AA (dark, 8.56:1) and theme ink is
+ * selected where it does not (light accent amber measures 3.11:1).
+ */
+function trendLabelFill(theme: ChartExportTheme): string {
+  return contrastRatio(theme.accent, theme.surface) >= AA_NORMAL_TEXT
+    ? theme.accent
+    : preferredInkOn(theme.surface, theme);
+}
+
 function horizontalBars(req: ChartExportRequest, maxValue: number, totalValue: number): string {
   const n = req.data.length;
   const rowH = PLOT_H / n;
@@ -157,8 +222,8 @@ function horizontalBars(req: ChartExportRequest, maxValue: number, totalValue: n
         `<title>${escapeXml(`${d.label}: ${formatChartValue(d.value)} (${pctOfShown}% of shown)`)}</title>`,
         `<text x="${MARGIN.left - 14}" y="${(y + barH / 2 + 4).toFixed(1)}" text-anchor="end" font-family="${FONT_STACK}" font-size="13" fill="${req.theme.textPrimary}">${escapeXml(label)}</text>`,
         `<rect x="${MARGIN.left}" y="${y.toFixed(1)}" width="${PLOT_W}" height="${barH.toFixed(1)}" rx="${(barH / 2).toFixed(1)}" fill="${req.theme.surfaceSecondary}" />`,
-        `<rect x="${MARGIN.left}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="${(barH / 2).toFixed(1)}" fill="${color}" fill-opacity="0.85" />`,
-        `<text x="${(MARGIN.left + barW + (inside ? -12 : 12)).toFixed(1)}" y="${(y + barH / 2 + 4).toFixed(1)}" text-anchor="${inside ? 'end' : 'start'}" font-family="${MONO_STACK}" font-size="13" font-weight="600" fill="${inside ? req.theme.surface : req.theme.textSecondary}">${escapeXml(formatChartValue(d.value))}</text>`,
+        `<rect x="${MARGIN.left}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="${(barH / 2).toFixed(1)}" fill="${color}" fill-opacity="${BAR_FILL_OPACITY}" />`,
+        `<text x="${(MARGIN.left + barW + (inside ? -12 : 12)).toFixed(1)}" y="${(y + barH / 2 + 4).toFixed(1)}" text-anchor="${inside ? 'end' : 'start'}" font-family="${MONO_STACK}" font-size="13" font-weight="600" fill="${inside ? insideBarLabelFill(color, req.theme) : req.theme.textSecondary}">${escapeXml(formatChartValue(d.value))}</text>`,
         `</g>`,
       ].join('\n    ')
     );
@@ -282,7 +347,7 @@ function trend(req: ChartExportRequest, maxValue: number, filled: boolean): stri
         `<g>`,
         `<title>${escapeXml(`${p.label}: ${formatChartValue(p.value)}`)}</title>`,
         `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="4.5" fill="${req.theme.surface}" stroke="${req.theme.accent}" stroke-width="2.5" />`,
-        `<text x="${p.x.toFixed(1)}" y="${(p.y - 14).toFixed(1)}" text-anchor="middle" font-family="${MONO_STACK}" font-size="12" font-weight="600" fill="${req.theme.accent}">${escapeXml(formatChartValue(p.value))}</text>`,
+        `<text x="${p.x.toFixed(1)}" y="${(p.y - 14).toFixed(1)}" text-anchor="middle" font-family="${MONO_STACK}" font-size="12" font-weight="600" fill="${trendLabelFill(req.theme)}">${escapeXml(formatChartValue(p.value))}</text>`,
         `<text x="${p.x.toFixed(1)}" y="${MARGIN.top + PLOT_H + 24}" text-anchor="middle" font-family="${FONT_STACK}" font-size="${n > 8 ? 10 : 12}" fill="${req.theme.textPrimary}">${escapeXml(truncate(p.label, n > 8 ? 8 : 16))}</text>`,
         `</g>`,
       ].join('\n    ')

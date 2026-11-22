@@ -257,3 +257,298 @@ describe('Chart SVG export — standalone documents for every chart type', () =>
     }
   });
 });
+
+/**
+ * WCAG 1.4.3 arithmetic, re-implemented here on purpose: if the exporter and the test shared one
+ * contrast function, a wrong implementation would pass its own test.
+ */
+const srgbChannel = (hex: string, at: number) => parseInt(hex.slice(at, at + 2), 16) / 255;
+const toLinear = (channel: number) => (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+const relativeLuminance = (hex: string) =>
+  0.2126 * toLinear(srgbChannel(hex, 1)) + 0.7152 * toLinear(srgbChannel(hex, 3)) + 0.0722 * toLinear(srgbChannel(hex, 5));
+const contrast = (foreground: string, background: string) => {
+  const a = relativeLuminance(foreground);
+  const b = relativeLuminance(background);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+};
+const composite = (foreground: string, background: string, alpha: number) =>
+  `#${[1, 3, 5]
+    .map((at) =>
+      Math.round(alpha * parseInt(foreground.slice(at, at + 2), 16) + (1 - alpha) * parseInt(background.slice(at, at + 2), 16))
+        .toString(16)
+        .padStart(2, '0')
+    )
+    .join('')}`;
+
+/**
+ * The ramps DataChart actually hands to the exporter, read out of the component so this suite can
+ * never drift from the colours that ship.
+ */
+function livePalettes(): { light: string[]; dark: string[] } {
+  const source = readFileSync('src/components/DataChart.tsx', 'utf-8');
+  const grab = (name: string): string[] => {
+    const block = source.match(new RegExp(`const ${name} = \\[([^\\]]*)\\]`, 's'));
+    assert.ok(block, `${name} is no longer a literal array in DataChart.tsx`);
+    const colors = [...block[1].matchAll(/'(#[0-9A-Fa-f]{6})'/g)].map((m) => m[1]);
+    assert.strictEqual(colors.length, 8, `${name}: expected 8 categorical colors`);
+    return colors;
+  };
+  return { light: grab('LIGHT_PALETTE'), dark: grab('DARK_PALETTE') };
+}
+
+/** Pairs each translucent value bar with the 13px/600 label the export draws on top of it. */
+function insideBarLabels(svg: string): { barColor: string; alpha: number; fill: string; text: string }[] {
+  const found: { barColor: string; alpha: number; fill: string; text: string }[] = [];
+  for (const group of svg.split('<g>').slice(1)) {
+    const bar = group.match(/<rect x="112" y="[\d.]+" width="([\d.]+)" height="[\d.]+" rx="[\d.]+" fill="(#[0-9A-Fa-f]{6})" fill-opacity="([\d.]+)" \/>/);
+    const label = group.match(/font-size="13" font-weight="600" fill="(#[0-9A-Fa-f]{6})">([^<]*)<\/text>/);
+    if (bar && label && Number(bar[1]) > 120) {
+      found.push({ barColor: bar[2], alpha: Number(bar[3]), fill: label[1], text: label[2] });
+    }
+  }
+  return found;
+}
+
+describe('Chart SVG export — inside-bar value labels are legible on the painted fill', () => {
+  const PALETTES = livePalettes();
+  // equal values => every bar spans the plot => every label takes the inside branch
+  const eight = PALETTES.light.map((_, i) => ({ label: `Segment ${i + 1}`, value: 1000 }));
+
+  function exportDoc(theme: typeof LIGHT_CHART_EXPORT_THEME, palette: string[]) {
+    return build({ type: 'horizontal_bar', theme, palette, data: eight });
+  }
+
+  it('measures AA against the composited bar, not the palette stop', () => {
+    for (const [name, theme, palette] of [
+      ['light', LIGHT_CHART_EXPORT_THEME, PALETTES.light],
+      ['dark', DARK_CHART_EXPORT_THEME, PALETTES.dark],
+    ] as const) {
+      const labels = insideBarLabels(exportDoc(theme, palette));
+      assert.strictEqual(labels.length, 8, `${name}: every categorical stop exercised through the inside branch`);
+      for (const label of labels) {
+        const painted = composite(label.barColor, theme.surfaceSecondary, label.alpha);
+        assert.strictEqual(label.alpha, 0.85, `${name}: the bar is still painted at 0.85`);
+        assert.ok(
+          contrast(label.fill, painted) >= 4.5,
+          `${name}: label ${label.fill} on ${label.barColor}@${label.alpha} over ${theme.surfaceSecondary} (painted ${painted}) is ${contrast(label.fill, painted).toFixed(2)}:1, below 4.5:1`
+        );
+      }
+    }
+  });
+
+  it('keeps the light ramp on the theme text colours wherever one of them is already compliant', () => {
+    const labels = insideBarLabels(exportDoc(LIGHT_CHART_EXPORT_THEME, PALETTES.light));
+    const theme = LIGHT_CHART_EXPORT_THEME;
+    labels.forEach((label, i) => {
+      const painted = composite(label.barColor, theme.surfaceSecondary, label.alpha);
+      const themeBest = Math.max(contrast(theme.textPrimary, painted), contrast(theme.surface, painted));
+      const expected = themeBest >= 4.5 ? (contrast(theme.textPrimary, painted) >= contrast(theme.surface, painted) ? theme.textPrimary : theme.surface) : '#000000';
+      assert.strictEqual(label.fill, expected, `light stop ${PALETTES.light[i]}: black is only used when no theme colour clears AA`);
+    });
+    assert.ok(labels.some((l) => l.fill === '#000000'), 'at least one mid-tone hue needs the black fallback');
+    assert.ok(labels.filter((l) => l.fill === '#000000').length <= 2, 'the fallback stays an exception, not the rule');
+  });
+
+  it('leaves dark-theme documents byte-identical in label paint', () => {
+    const labels = insideBarLabels(exportDoc(DARK_CHART_EXPORT_THEME, PALETTES.dark));
+    assert.strictEqual(labels.length, 8);
+    for (const label of labels) {
+      assert.strictEqual(label.fill, DARK_CHART_EXPORT_THEME.surface, 'dark inside labels stay on the near-black surface ink');
+    }
+  });
+
+  it('keeps the short-bar branch legible against the track it sits on', () => {
+    for (const theme of [LIGHT_CHART_EXPORT_THEME, DARK_CHART_EXPORT_THEME]) {
+      const svg = build({
+        type: 'horizontal_bar',
+        theme,
+        palette: PALETTES.light,
+        data: [{ label: 'Big', value: 1000 }, { label: 'Tiny', value: 8 }],
+      });
+      const outside = [...svg.matchAll(/text-anchor="start" font-family="'JetBrains Mono'[^"]*" font-size="13" font-weight="600" fill="(#[0-9A-Fa-f]{6})"/g)].map((m) => m[1]);
+      assert.strictEqual(outside.length, 1, 'the short bar labels outside the fill');
+      for (const fill of outside) {
+        assert.ok(
+          contrast(fill, theme.surfaceSecondary) >= 4.5,
+          `outside label ${fill} on the ${theme.surfaceSecondary} track is ${contrast(fill, theme.surfaceSecondary).toFixed(2)}:1`
+        );
+      }
+    }
+  });
+
+  it('introduces no paint value outside the export theme, the palette and the black fallback', () => {
+    for (const [name, theme, palette] of [
+      ['light', LIGHT_CHART_EXPORT_THEME, PALETTES.light],
+      ['dark', DARK_CHART_EXPORT_THEME, PALETTES.dark],
+    ] as const) {
+      const svg = exportDoc(theme, palette);
+      const allowed = new Set([...Object.values(theme), ...palette, '#000000']);
+      const used = [...new Set([...svg.matchAll(/(?:fill|stroke)="(#[0-9A-Fa-f]{6})"/g)].map((m) => m[1]))];
+      const unexpected = used.filter((c) => !allowed.has(c));
+      assert.deepStrictEqual(unexpected, [], `${name}: unexpected colors ${unexpected.join(', ')}`);
+      for (const color of palette) {
+        assert.ok(svg.includes(`fill="${color}" fill-opacity="0.85"`), `${name}: ${color} still painted as the categorical bar, unaltered`);
+      }
+      assert.ok(svg.includes('viewBox="0 0 880 520"'), `${name}: dimensions preserved`);
+      assert.ok(svg.includes('font-size="13"'), `${name}: label typography preserved`);
+    }
+  });
+
+  it('does not touch the four chart types that never place a label inside a bar', () => {
+    for (const type of ['bar', 'donut', 'line', 'area'] as const) {
+      const svg = build({ type, theme: LIGHT_CHART_EXPORT_THEME, palette: PALETTES.light, data: eight });
+      assert.strictEqual(insideBarLabels(svg).length, 0, `${type}: no inside-bar label exists`);
+    }
+    const columns = build({ type: 'bar', theme: LIGHT_CHART_EXPORT_THEME, palette: PALETTES.light, data: eight });
+    assert.strictEqual(
+      count(`font-size="12" font-weight="600" fill="${LIGHT_CHART_EXPORT_THEME.textSecondary}"`, columns),
+      8,
+      'column value labels stay above the bar in textSecondary'
+    );
+    assert.ok(
+      contrast(LIGHT_CHART_EXPORT_THEME.textSecondary, LIGHT_CHART_EXPORT_THEME.surface) >= 4.5,
+      'and that pairing is compliant over the plot background'
+    );
+  });
+
+  it('keeps the R1 muted-text correction compliant on both export surfaces', () => {
+    const pairs = [
+      ['light', LIGHT_CHART_EXPORT_THEME, '#6E6760'],
+      ['dark', DARK_CHART_EXPORT_THEME, '#9C948A'],
+    ] as const;
+    for (const [name, theme, expected] of pairs) {
+      assert.strictEqual(theme.textMuted, expected, `${name}: muted label token`);
+      for (const surface of [theme.surface, theme.surfaceSecondary]) {
+        assert.ok(
+          contrast(theme.textMuted, surface) >= 4.5,
+          `${name}: ${theme.textMuted} on ${surface} is ${contrast(theme.textMuted, surface).toFixed(2)}:1`
+        );
+      }
+    }
+  });
+});
+
+/**
+ * Pairs each trend marker with the 12px/600 value label drawn 14px above it. The label sits on the
+ * bare document surface: in `area` documents the translucent fill is bounded above by the line
+ * itself, so nothing is painted behind a label positioned above its point.
+ */
+function trendPointLabels(svg: string): {
+  cx: number; cy: number; dotFill: string; dotStroke: string;
+  labelX: number; labelY: number; fill: string; text: string;
+  categorySize: number; categoryFill: string;
+}[] {
+  const found: ReturnType<typeof trendPointLabels> = [];
+  for (const group of svg.split('<g>').slice(1)) {
+    const circle = group.match(/<circle cx="([\d.]+)" cy="([\d.]+)" r="4.5" fill="(#[0-9A-Fa-f]{6})" stroke="(#[0-9A-Fa-f]{6})" stroke-width="2.5" \/>/);
+    const value = group.match(/<text x="([\d.]+)" y="([\d.]+)" text-anchor="middle" font-family="'JetBrains Mono'[^"]*" font-size="12" font-weight="600" fill="(#[0-9A-Fa-f]{6})">([^<]*)<\/text>/);
+    const category = group.match(/<text x="[\d.]+" y="[\d.]+" text-anchor="middle" font-family="'Inter'[^"]*" font-size="(\d+)" fill="(#[0-9A-Fa-f]{6})">([^<]*)<\/text>/);
+    if (!circle || !value || !category) continue;
+    found.push({
+      cx: Number(circle[1]),
+      cy: Number(circle[2]),
+      dotFill: circle[3],
+      dotStroke: circle[4],
+      labelX: Number(value[1]),
+      labelY: Number(value[2]),
+      fill: value[3],
+      text: value[4],
+      categorySize: Number(category[1]),
+      categoryFill: category[2],
+    });
+  }
+  return found;
+}
+
+describe('Chart SVG export — trend point labels are legible on the plot surface', () => {
+  const PALETTES = livePalettes();
+  const TREND_DATA = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'].map((label, i) => ({
+    label,
+    value: [120, 260, 90, 340, 210, 150][i],
+  }));
+
+  function exportTrend(theme: typeof LIGHT_CHART_EXPORT_THEME, type: 'line' | 'area', palette = PALETTES.light) {
+    return build({ type, theme, palette, data: TREND_DATA });
+  }
+
+  it('clears AA for every line and area point label in both themes, measured from the emitted SVG', () => {
+    for (const [name, theme] of [
+      ['light', LIGHT_CHART_EXPORT_THEME],
+      ['dark', DARK_CHART_EXPORT_THEME],
+    ] as const) {
+      for (const type of ['line', 'area'] as const) {
+        const labels = trendPointLabels(exportTrend(theme, type));
+        assert.strictEqual(labels.length, TREND_DATA.length, `${name} ${type}: every point carries a value label`);
+        assert.deepStrictEqual(
+          labels.map((l) => l.text),
+          TREND_DATA.map((d) => formatChartValue(d.value)),
+          `${name} ${type}: labels still show the formatted values`
+        );
+        for (const label of labels) {
+          const ratio = contrast(label.fill, theme.surface);
+          assert.ok(
+            ratio >= 4.5,
+            `${name} ${type}: point label ${label.fill} on ${theme.surface} is ${ratio.toFixed(2)}:1, below 4.5:1`
+          );
+        }
+      }
+    }
+  });
+
+  it('replaces the light accent ink that fails AA and keeps the replacement inside the theme', () => {
+    const theme = LIGHT_CHART_EXPORT_THEME;
+    assert.ok(
+      contrast(theme.accent, theme.surface) < 4.5,
+      `light accent ${theme.accent} on ${theme.surface} is ${contrast(theme.accent, theme.surface).toFixed(2)}:1, the paint this fix removes`
+    );
+    for (const type of ['line', 'area'] as const) {
+      for (const label of trendPointLabels(exportTrend(theme, type))) {
+        assert.strictEqual(label.fill, theme.textPrimary, `light ${type}: label paint is the theme ink`);
+        assert.notStrictEqual(label.fill, theme.accent, `light ${type}: the failing accent is not re-emitted`);
+      }
+    }
+  });
+
+  it('leaves the dark accent labels in place because they already clear AA', () => {
+    const theme = DARK_CHART_EXPORT_THEME;
+    for (const type of ['line', 'area'] as const) {
+      const labels = trendPointLabels(exportTrend(theme, type, PALETTES.dark));
+      assert.strictEqual(labels.length, TREND_DATA.length);
+      for (const label of labels) {
+        assert.strictEqual(label.fill, theme.accent, `dark ${type}: existing accent paint preserved`);
+        assert.ok(
+          contrast(label.fill, theme.surface) >= 4.5,
+          `dark ${type}: preserved accent measures ${contrast(label.fill, theme.surface).toFixed(2)}:1`
+        );
+      }
+    }
+  });
+
+  it('leaves geometry, marker colour, label placement and typography unchanged', () => {
+    for (const type of ['line', 'area'] as const) {
+      const light = trendPointLabels(exportTrend(LIGHT_CHART_EXPORT_THEME, type));
+      const dark = trendPointLabels(exportTrend(DARK_CHART_EXPORT_THEME, type, PALETTES.dark));
+      assert.deepStrictEqual(
+        light.map((l) => [l.cx, l.cy, l.labelX, l.labelY]),
+        dark.map((l) => [l.cx, l.cy, l.labelX, l.labelY]),
+        `${type}: geometry and label positions are independent of the ink change`
+      );
+      for (const theme of [LIGHT_CHART_EXPORT_THEME, DARK_CHART_EXPORT_THEME]) {
+        const labels = trendPointLabels(exportTrend(theme, type, theme === LIGHT_CHART_EXPORT_THEME ? PALETTES.light : PALETTES.dark));
+        for (const label of labels) {
+          assert.strictEqual(label.dotStroke, theme.accent, `${type}: series marker stroke unchanged`);
+          assert.strictEqual(label.dotFill, theme.surface, `${type}: marker interior unchanged`);
+          assert.ok(Math.abs(label.labelY - (label.cy - 14)) <= 0.05, `${type}: label still 14px above the point`);
+          assert.strictEqual(label.labelX, label.cx, `${type}: label still centred on the point`);
+          assert.strictEqual(label.categorySize, 12, `${type}: category label size unchanged`);
+          assert.strictEqual(label.categoryFill, theme.textPrimary, `${type}: category label paint unchanged`);
+        }
+        const svg = exportTrend(theme, type, theme === LIGHT_CHART_EXPORT_THEME ? PALETTES.light : PALETTES.dark);
+        assert.ok(svg.includes(`stroke="${theme.accent}" stroke-width="3"`), `${type}: line stroke unchanged`);
+        assert.strictEqual(svg.includes(`fill="${theme.accent}" fill-opacity="0.2"`), type === 'area', `${type}: area fill only in area documents`);
+        assert.ok(svg.includes('viewBox="0 0 880 520"'), `${type}: dimensions preserved`);
+        assert.ok(svg.includes(`<rect x="0" y="0" width="880" height="520" fill="${theme.surface}" />`), `${type}: document background unchanged`);
+      }
+    }
+  });
+});

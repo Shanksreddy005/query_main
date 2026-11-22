@@ -180,11 +180,11 @@ export const DataChart: React.FC<DataChartProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-border-subtle">
         <div>
           <div className="flex items-center gap-2">
-            <h4 className="text-sm font-semibold text-text-primary">
+            <h4 id="data-chart-title" className="text-sm font-semibold text-text-primary">
               {suggestion.title || `${yLabel} by ${xLabel}`}
             </h4>
             {aggMap.size < data.length && (
-              <span className="text-[10px] font-mono font-medium px-1.5 py-0.2 rounded bg-surface-secondary text-text-muted border border-border-subtle">
+              <span className="text-meta font-mono font-medium px-1.5 py-0.2 rounded bg-surface-secondary text-text-muted border border-border-subtle">
                 Aggregated ({aggMethod.toUpperCase()})
               </span>
             )}
@@ -193,7 +193,7 @@ export const DataChart: React.FC<DataChartProps> = ({
             {chartData.length} {chartData.length === 1 ? 'data point' : 'data points'} · {yLabel} vs {xLabel}
           </p>
           {aggMap.size < data.length && allCols.some((c) => !numCols.includes(c) && c !== xKey) && (
-            <p className="text-[11px] text-text-muted mt-0.5">
+            <p className="text-prose text-text-muted mt-0.5">
               Collapsed {data.length} result rows into {aggMap.size} bars on {xLabel}; the query also grouped by{' '}
               {allCols
                 .filter((c) => !numCols.includes(c) && c !== xKey)
@@ -206,11 +206,13 @@ export const DataChart: React.FC<DataChartProps> = ({
         {/* Action Toolbar */}
         <div className="flex items-center gap-1.5 flex-wrap">
           {/* Chart Type Selector Pills */}
-          <div className="flex items-center p-0.5 rounded-lg bg-surface-secondary border border-border-subtle">
+          <div role="group" aria-label="Chart type" className="flex items-center p-0.5 rounded-lg bg-surface-secondary border border-border-subtle">
             <button
               type="button"
               onClick={() => setChartType('horizontal_bar')}
-              className={`p-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+              aria-label="Horizontal bar chart"
+              aria-pressed={isHBar}
+              className={`p-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer focus-ring ${
                 isHBar ? 'bg-surface text-accent shadow-2xs' : 'text-text-muted hover:text-text-primary'
               }`}
               title="Horizontal Bar Chart"
@@ -220,7 +222,9 @@ export const DataChart: React.FC<DataChartProps> = ({
             <button
               type="button"
               onClick={() => setChartType('bar')}
-              className={`p-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+              aria-label="Vertical column chart"
+              aria-pressed={isColBar}
+              className={`p-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer focus-ring ${
                 isColBar ? 'bg-surface text-accent shadow-2xs' : 'text-text-muted hover:text-text-primary'
               }`}
               title="Vertical Column Bar Chart"
@@ -230,7 +234,9 @@ export const DataChart: React.FC<DataChartProps> = ({
             <button
               type="button"
               onClick={() => setChartType('donut')}
-              className={`p-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+              aria-label="Donut composition chart"
+              aria-pressed={isDonut}
+              className={`p-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer focus-ring ${
                 isDonut ? 'bg-surface text-accent shadow-2xs' : 'text-text-muted hover:text-text-primary'
               }`}
               title="Donut / Composition Chart"
@@ -240,7 +246,9 @@ export const DataChart: React.FC<DataChartProps> = ({
             <button
               type="button"
               onClick={() => setChartType('line')}
-              className={`p-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+              aria-label="Line trend chart"
+              aria-pressed={isLine}
+              className={`p-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer focus-ring ${
                 isLine ? 'bg-surface text-accent shadow-2xs' : 'text-text-muted hover:text-text-primary'
               }`}
               title="Line Trend Chart"
@@ -250,7 +258,9 @@ export const DataChart: React.FC<DataChartProps> = ({
             <button
               type="button"
               onClick={() => setChartType('area')}
-              className={`p-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+              aria-label="Area trend chart"
+              aria-pressed={isArea}
+              className={`p-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer focus-ring ${
                 isArea ? 'bg-surface text-accent shadow-2xs' : 'text-text-muted hover:text-text-primary'
               }`}
               title="Area Trend Chart"
@@ -263,7 +273,8 @@ export const DataChart: React.FC<DataChartProps> = ({
             <button
               type="button"
               onClick={() => setShowConfig(!showConfig)}
-              className={`p-1.5 rounded-lg border text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer ${
+              aria-expanded={showConfig}
+              className={`p-1.5 rounded-lg border text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer focus-ring ${
                 showConfig
                   ? 'bg-accent/15 border-accent/40 text-accent'
                   : 'bg-surface border-border-strong text-text-secondary hover:text-text-primary hover:border-accent'
@@ -278,7 +289,8 @@ export const DataChart: React.FC<DataChartProps> = ({
           <button
             type="button"
             onClick={handleDownloadSvg}
-            className="p-1.5 rounded-lg border border-border-strong bg-surface hover:bg-surface-elevated text-text-secondary hover:text-accent transition-colors cursor-pointer"
+            aria-label="Download chart as SVG"
+            className="p-1.5 rounded-lg border border-border-strong bg-surface hover:bg-surface-elevated text-text-secondary hover:text-accent transition-colors cursor-pointer focus-ring"
             title="Download Chart as SVG"
           >
             <Download className="w-3.5 h-3.5" />
@@ -288,7 +300,8 @@ export const DataChart: React.FC<DataChartProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded-lg border border-border-strong bg-surface hover:bg-surface-elevated text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+              aria-label="Close visualizer"
+              className="p-1.5 rounded-lg border border-border-strong bg-surface hover:bg-surface-elevated text-text-muted hover:text-text-primary transition-colors cursor-pointer focus-ring"
               title="Close Visualizer"
             >
               <X className="w-3.5 h-3.5" />
@@ -301,13 +314,14 @@ export const DataChart: React.FC<DataChartProps> = ({
       {showConfig && allowCustomize && (
         <div className="p-3 mb-4 rounded-lg bg-surface-secondary/70 border border-border-subtle grid grid-cols-1 sm:grid-cols-3 gap-3 animate-in fade-in">
           <div>
-            <label className="block text-[10px] font-semibold text-text-muted uppercase mb-1">
+            <label htmlFor="chart-x-key" className="block text-meta font-semibold text-text-muted uppercase mb-1">
               Dimension (Label / X-Axis)
             </label>
             <select
+              id="chart-x-key"
               value={xKey}
               onChange={(e) => setXKey(e.target.value)}
-              className="w-full text-xs font-medium px-2 py-1.5 rounded-md border border-border-strong bg-surface text-text-primary focus:outline-none focus:border-accent"
+              className="w-full text-xs font-medium px-2 py-1.5 rounded-md border border-field-border bg-surface text-text-primary focus:border-accent focus-ring"
             >
               {allCols.map((col) => (
                 <option key={col} value={col}>
@@ -318,13 +332,14 @@ export const DataChart: React.FC<DataChartProps> = ({
           </div>
 
           <div>
-            <label className="block text-[10px] font-semibold text-text-muted uppercase mb-1">
+            <label htmlFor="chart-y-key" className="block text-meta font-semibold text-text-muted uppercase mb-1">
               Metric (Value / Y-Axis)
             </label>
             <select
+              id="chart-y-key"
               value={yKey}
               onChange={(e) => setYKey(e.target.value)}
-              className="w-full text-xs font-medium px-2 py-1.5 rounded-md border border-border-strong bg-surface text-text-primary focus:outline-none focus:border-accent"
+              className="w-full text-xs font-medium px-2 py-1.5 rounded-md border border-field-border bg-surface text-text-primary focus:border-accent focus-ring"
             >
               {numCols.map((col) => (
                 <option key={col} value={col}>
@@ -335,13 +350,14 @@ export const DataChart: React.FC<DataChartProps> = ({
           </div>
 
           <div>
-            <label className="block text-[10px] font-semibold text-text-muted uppercase mb-1">
+            <label htmlFor="chart-agg-method" className="block text-meta font-semibold text-text-muted uppercase mb-1">
               Aggregation Method
             </label>
             <select
+              id="chart-agg-method"
               value={aggMethod}
               onChange={(e) => setAggMethod(e.target.value as any)}
-              className="w-full text-xs font-medium px-2 py-1.5 rounded-md border border-border-strong bg-surface text-text-primary focus:outline-none focus:border-accent"
+              className="w-full text-xs font-medium px-2 py-1.5 rounded-md border border-field-border bg-surface text-text-primary focus:border-accent focus-ring"
             >
               <option value="sum">SUM (Total Value)</option>
               <option value="avg">AVG (Average Value)</option>
@@ -356,7 +372,7 @@ export const DataChart: React.FC<DataChartProps> = ({
         // Donut / Ring Chart View
         <div className="flex flex-col md:flex-row items-center justify-center gap-6 py-2">
           <div className="relative w-48 h-48 flex-shrink-0">
-            <svg viewBox="0 0 100 100" className="w-full h-full transform -rotate-90">
+            <svg viewBox="0 0 100 100" role="img" aria-labelledby="data-chart-title" className="w-full h-full transform -rotate-90">
               {(() => {
                 let accumulatedPercent = 0;
                 return chartData.map((d, i) => {
@@ -390,7 +406,7 @@ export const DataChart: React.FC<DataChartProps> = ({
               <span className="text-xs text-text-secondary truncate max-w-[120px]">
                 {hoveredIdx !== null ? chartData[hoveredIdx].label : 'Total'}
               </span>
-              <span className="text-sm font-bold font-mono text-text-primary mt-0.5">
+              <span className="text-sm font-semibold font-mono tabular-nums text-text-primary mt-0.5">
                 {hoveredIdx !== null ? formatVal(chartData[hoveredIdx].value) : formatVal(totalValue)}
               </span>
             </div>
@@ -415,7 +431,7 @@ export const DataChart: React.FC<DataChartProps> = ({
                   />
                   <span className="truncate max-w-[110px] text-text-secondary">{d.label}</span>
                   <div className="font-mono ml-auto text-right flex items-center gap-1.5">
-                    <span className="text-[10px] text-text-muted">{pct}%</span>
+                    <span className="text-meta tabular-nums text-text-muted">{pct}%</span>
                     <span className="font-semibold text-text-primary">{formatVal(d.value)}</span>
                   </div>
                 </div>
@@ -427,7 +443,7 @@ export const DataChart: React.FC<DataChartProps> = ({
         // Line / Area Trend Chart
         <div className="pt-2 pb-1">
           <div className="h-48 w-full relative">
-            <svg viewBox="0 0 400 120" className="w-full h-full overflow-visible">
+            <svg viewBox="0 0 400 120" role="img" aria-labelledby="data-chart-title" className="w-full h-full overflow-visible">
               <line
                 x1="0"
                 y1="20"
@@ -499,7 +515,7 @@ export const DataChart: React.FC<DataChartProps> = ({
             </svg>
           </div>
 
-          <div className="flex justify-between items-center text-[11px] text-text-muted pt-2 border-t border-border-subtle">
+          <div className="flex justify-between items-center text-meta tabular-nums text-text-muted pt-2 border-t border-border-subtle">
             <span className="truncate max-w-[120px]">{chartData[0]?.label}</span>
             {hoveredIdx !== null && (
               <span className="font-mono text-accent font-semibold">
@@ -527,7 +543,7 @@ export const DataChart: React.FC<DataChartProps> = ({
                   onMouseLeave={() => setHoveredIdx(null)}
                 >
                   <span
-                    className={`text-[10px] font-mono mb-1 transition-opacity ${
+                    className={`text-meta font-mono mb-1 transition-opacity pointer-coarse:opacity-100 ${
                       isHovered ? 'text-accent font-bold opacity-100' : 'text-text-muted opacity-0 group-hover:opacity-100'
                     }`}
                   >
@@ -545,7 +561,7 @@ export const DataChart: React.FC<DataChartProps> = ({
               );
             })}
           </div>
-          <div className="flex justify-between items-center text-[10px] text-text-muted pt-2 overflow-x-auto gap-2">
+          <div className="flex justify-between items-center text-meta text-text-muted pt-2 overflow-x-auto gap-2">
             {chartData.map((d, i) => (
               <div
                 key={i}
@@ -582,9 +598,9 @@ export const DataChart: React.FC<DataChartProps> = ({
                     {d.label}
                   </span>
                   <div className="flex items-center gap-2 font-mono">
-                    <span className="text-[10px] text-text-muted">{pct}% of shown</span>
+                    <span className="text-meta tabular-nums text-text-muted">{pct}% of shown</span>
                     <span
-                      className={`text-[11px] transition-colors duration-fast ${
+                      className={`tabular-nums transition-colors duration-fast ${
                         isHovered ? 'text-accent font-semibold' : 'text-text-primary font-medium'
                       }`}
                     >

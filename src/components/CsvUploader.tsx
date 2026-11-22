@@ -17,6 +17,9 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({ onDatasetLoaded, isDar
 
   const handleFile = (file: File) => {
     if (!file) return;
+    // Parsing is asynchronous, and a second drop while the first is in flight would leave two
+    // readers competing to set the dataset.
+    if (isLoading) return;
     setError(null);
     setIsLoading(true);
 
@@ -103,7 +106,7 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({ onDatasetLoaded, isDar
 
   const borderClass = isDragging
     ? 'border-accent bg-badge-accent-bg'
-    : 'border-border-strong bg-surface-secondary/40 hover:border-accent hover:bg-surface-secondary/70';
+    : 'border-field-border bg-surface-secondary/40 hover:border-accent hover:bg-surface-secondary/70';
 
   return (
     <div className="w-full space-y-4">
@@ -112,7 +115,11 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({ onDatasetLoaded, isDar
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        onClick={() => fileInputRef.current?.click()}
+        onClick={() => {
+          if (isLoading) return;
+          fileInputRef.current?.click();
+        }}
+        aria-busy={isLoading}
         className={`relative border-2 border-dashed rounded-2xl p-8 transition-all duration-fast cursor-pointer text-center group ${borderClass}`}
       >
         <input
@@ -130,17 +137,31 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({ onDatasetLoaded, isDar
         <div className="flex flex-col items-center justify-center gap-3">
           <div className="w-14 h-14 rounded-2xl bg-badge-accent-bg text-badge-accent-fg border border-badge-accent-border flex items-center justify-center transition-transform duration-fast group-hover:scale-105 shadow-2xs">
             {isLoading ? (
-              <div className="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin" />
+              <div role="status" className="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin">
+                <span className="sr-only">Parsing dataset</span>
+              </div>
             ) : (
               <UploadCloud className="w-7 h-7 text-accent" />
             )}
           </div>
 
           <div>
-            <p className="text-sm font-semibold tracking-tight text-text-primary">
-              Drop your CSV, TSV, or JSON dataset here, or <span className="text-accent underline">browse</span>
+            <p className="text-sm font-semibold text-text-primary">
+              Drop your CSV, TSV, or JSON dataset here, or{' '}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  fileInputRef.current?.click();
+                }}
+                disabled={isLoading}
+                aria-label="Browse for a dataset file"
+                className="text-accent underline cursor-pointer rounded focus-ring disabled:text-text-muted disabled:no-underline disabled:cursor-not-allowed"
+              >
+                browse
+              </button>
             </p>
-            <p className="text-xs text-text-muted mt-1 leading-relaxed">
+            <p className="text-prose text-text-muted mt-1">
               Rows stay in this browser · DuckDB-WASM engine · your question plus column names,
               types and aggregate statistics go only to the AI provider you configure
             </p>
@@ -148,7 +169,7 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({ onDatasetLoaded, isDar
         </div>
 
         {error && (
-          <div className="mt-4 p-2.5 rounded-lg bg-badge-error-bg border border-badge-error-border text-badge-error-fg text-xs flex items-center justify-center gap-2 shadow-2xs">
+          <div role="alert" className="mt-4 p-2.5 rounded-lg bg-badge-error-bg border border-badge-error-border text-badge-error-fg text-xs flex items-center justify-center gap-2 shadow-2xs">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
             <span>{error}</span>
           </div>
@@ -166,19 +187,19 @@ export const CsvUploader: React.FC<CsvUploaderProps> = ({ onDatasetLoaded, isDar
           <button
             type="button"
             onClick={() => loadSample('saas')}
-            className="btn-interactive flex-1 sm:flex-initial text-xs font-medium px-3 py-1.5 rounded-lg border border-border-strong bg-surface text-text-secondary hover:text-text-primary hover:border-border-strong hover:bg-surface-elevated flex items-center justify-center gap-1.5 shadow-2xs"
+            className="btn-interactive flex-1 sm:flex-initial text-xs font-medium px-3 py-1.5 rounded-lg border border-border-strong bg-surface text-text-secondary hover:text-text-primary hover:border-border-strong hover:bg-surface-elevated flex items-center justify-center gap-1.5 shadow-2xs focus-ring"
           >
             <span>SaaS Retention & MRR</span>
-            <span className="text-[10px] font-mono text-text-muted">(25 rows)</span>
+            <span className="text-meta font-mono text-text-muted">(25 rows)</span>
           </button>
 
           <button
             type="button"
             onClick={() => loadSample('ecommerce')}
-            className="btn-interactive flex-1 sm:flex-initial text-xs font-medium px-3 py-1.5 rounded-lg border border-border-strong bg-surface text-text-secondary hover:text-text-primary hover:border-border-strong hover:bg-surface-elevated flex items-center justify-center gap-1.5 shadow-2xs"
+            className="btn-interactive flex-1 sm:flex-initial text-xs font-medium px-3 py-1.5 rounded-lg border border-border-strong bg-surface text-text-secondary hover:text-text-primary hover:border-border-strong hover:bg-surface-elevated flex items-center justify-center gap-1.5 shadow-2xs focus-ring"
           >
             <span>E-Commerce Profitability</span>
-            <span className="text-[10px] font-mono text-text-muted">(15 rows)</span>
+            <span className="text-meta font-mono text-text-muted">(15 rows)</span>
           </button>
         </div>
       </div>

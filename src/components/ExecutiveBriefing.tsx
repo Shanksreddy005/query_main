@@ -24,6 +24,9 @@ export interface InsightsPayload extends Partial<QueryInsight> {
 export interface BriefingProps {
   insightsPayload: InsightsPayload;
   isDarkMode?: boolean;
+  // The results view surfaces this sentence in the answer band; rendering it twice in the same
+  // scroll sequence would repeat the finding word for word.
+  hideSummary?: boolean;
 }
 
 // Banned generic boilerplates that must NEVER be rendered in QueryMind summaries
@@ -42,14 +45,15 @@ function isCleanText(text: string): boolean {
   return !BANNED_BOILERPLATES.some((regex) => regex.test(text));
 }
 
-export function ExecutiveBriefing({ insightsPayload, isDarkMode = true }: BriefingProps) {
+// Single owner of the primary finding sentence, so the answer band and the briefing cannot drift.
+export function resolveBriefingSummary(payload: InsightsPayload): string {
+  const raw = payload.overview || payload.executive_summary || payload.summary || '';
+  return isCleanText(raw) ? raw : 'Analytical query execution verified against local dataset.';
+}
+
+export function ExecutiveBriefing({ insightsPayload, isDarkMode = true, hideSummary = false }: BriefingProps) {
   // 1. Primary Overview Text
-  const rawSummary =
-    insightsPayload.overview ||
-    insightsPayload.executive_summary ||
-    insightsPayload.summary ||
-    '';
-  const summaryText = isCleanText(rawSummary) ? rawSummary : 'Analytical query execution verified against local dataset.';
+  const summaryText = resolveBriefingSummary(insightsPayload);
 
   // 2. Key Findings: only ground-truth findings from data
   let rawFindings: string[] = [];
@@ -116,33 +120,35 @@ export function ExecutiveBriefing({ insightsPayload, isDarkMode = true }: Briefi
       {/* Component Header Bar */}
       <div className="bg-surface border-b border-border-subtle px-5 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-accent text-xs font-semibold tracking-wider uppercase">Executive Analysis Summary</span>
+          <span className="text-accent text-sm font-semibold">Executive Analysis Summary</span>
           {insightsPayload.category && (
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-surface-secondary border border-border-strong text-text-secondary uppercase">
+            <span className="text-meta font-mono px-2 py-0.5 rounded-full bg-surface-secondary border border-border-strong text-text-secondary uppercase">
               {insightsPayload.category.replace(/_/g, ' ')}
             </span>
           )}
         </div>
-        <span className="text-[10px] text-text-muted font-mono tracking-wide">EVIDENCE GROUNDED · CLIENT-SIDE</span>
+        <span className="text-meta text-text-muted font-mono">EVIDENCE GROUNDED · CLIENT-SIDE</span>
       </div>
 
-      <div className="p-5 sm:p-6 space-y-5">
-        {/* Core Summary Overview */}
-        <div className="border-l-2 border-accent pl-4 py-0.5">
-          <p className="text-xs sm:text-sm font-medium leading-relaxed text-text-primary">
-            {summaryText}
-          </p>
-        </div>
+      <div className="p-4 sm:p-5 space-y-4">
+        {/* Core Summary Overview — omitted when the results answer band already shows this sentence */}
+        {!hideSummary && (
+          <div className="border-l-2 border-accent pl-4 py-0.5">
+            <p className="text-prose font-medium text-text-primary">
+              {summaryText}
+            </p>
+          </div>
+        )}
 
         {/* Key Findings List (adaptive: displayed only when verified findings exist) */}
         {hasFindings && (
-          <div className="space-y-2 pt-1">
-            <h5 className="text-xs font-bold uppercase tracking-wider text-text-secondary flex items-center gap-1.5">
-              <span>📊 Key Findings</span>
+          <div className="space-y-2">
+            <h5 className="text-meta font-semibold uppercase text-text-secondary flex items-center gap-1.5">
+              <span><span aria-hidden="true">📊 </span>Key Findings</span>
             </h5>
             <ul className="space-y-1.5">
               {findings.map((item, idx) => (
-                <li key={idx} className="text-xs text-text-secondary leading-relaxed flex items-start gap-2">
+                <li key={idx} className="text-prose text-text-secondary flex items-start gap-2">
                   <span className="text-accent font-bold mt-0.5">•</span>
                   <span>{item}</span>
                 </li>
@@ -153,13 +159,13 @@ export function ExecutiveBriefing({ insightsPayload, isDarkMode = true }: Briefi
 
         {/* Performance Comparison (adaptive: displayed when comparative breakdown exists) */}
         {hasComparisons && (
-          <div className="space-y-2 pt-1 bg-surface/40 border border-border-subtle p-3.5 rounded-lg">
-            <h5 className="text-xs font-bold uppercase tracking-wider text-text-secondary flex items-center gap-1.5">
-              <span>⚖️ Performance Comparison</span>
+          <div className="space-y-2 pt-3 border-t border-border-subtle/60">
+            <h5 className="text-meta font-semibold uppercase text-text-secondary flex items-center gap-1.5">
+              <span><span aria-hidden="true">⚖️ </span>Performance Comparison</span>
             </h5>
             <ul className="space-y-1.5">
               {comparisons.map((item, idx) => (
-                <li key={idx} className="text-xs text-text-secondary leading-relaxed flex items-start gap-2">
+                <li key={idx} className="text-prose text-text-secondary flex items-start gap-2">
                   <span className="text-accent font-bold mt-0.5">•</span>
                   <span>{item}</span>
                 </li>
@@ -170,17 +176,17 @@ export function ExecutiveBriefing({ insightsPayload, isDarkMode = true }: Briefi
 
         {/* 2-Column Grid for Anomalies and Implications (omitted if both are empty) */}
         {(hasAnomalies || hasImplications) && (
-          <div className={`grid grid-cols-1 ${hasAnomalies && hasImplications ? 'md:grid-cols-2' : ''} gap-5 pt-1`}>
+          <div className={`grid grid-cols-1 ${hasAnomalies && hasImplications ? 'md:grid-cols-2' : ''} gap-4 pt-3 border-t border-border-subtle/60`}>
             {/* Column 1: Found Anomalies (omitted if none found) */}
             {hasAnomalies && (
-              <div className="space-y-2 bg-surface/50 border border-border-subtle p-3.5 rounded-lg">
-                <h5 className="text-xs font-bold uppercase tracking-wider text-rose-400 flex items-center gap-1.5">
-                  <span>🛑 Anomalies & Data Quality</span>
+              <div className="space-y-2">
+                <h5 className="text-meta font-semibold uppercase text-error flex items-center gap-1.5">
+                  <span><span aria-hidden="true">🛑 </span>Anomalies & Data Quality</span>
                 </h5>
                 <ul className="space-y-1.5">
                   {anomalies.map((item, idx) => (
-                    <li key={idx} className="text-xs text-text-secondary leading-relaxed flex items-start gap-2">
-                      <span className="text-rose-400 font-bold mt-0.5">•</span>
+                    <li key={idx} className="text-prose text-text-secondary flex items-start gap-2">
+                      <span className="text-error font-bold mt-0.5">•</span>
                       <span>{item}</span>
                     </li>
                   ))}
@@ -190,14 +196,14 @@ export function ExecutiveBriefing({ insightsPayload, isDarkMode = true }: Briefi
 
             {/* Column 2: Business Implications (omitted if none found) */}
             {hasImplications && (
-              <div className="space-y-2 bg-surface/50 border border-border-subtle p-3.5 rounded-lg">
-                <h5 className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
-                  <span>💼 Business Implications</span>
+              <div className="space-y-2">
+                <h5 className="text-meta font-semibold uppercase text-warning flex items-center gap-1.5">
+                  <span><span aria-hidden="true">💼 </span>Business Implications</span>
                 </h5>
                 <ul className="space-y-1.5">
                   {implications.map((item, idx) => (
-                    <li key={idx} className="text-xs text-text-secondary leading-relaxed flex items-start gap-2">
-                      <span className="text-amber-400 font-bold mt-0.5">•</span>
+                    <li key={idx} className="text-prose text-text-secondary flex items-start gap-2">
+                      <span className="text-warning font-bold mt-0.5">•</span>
                       <span>{item}</span>
                     </li>
                   ))}
@@ -209,15 +215,15 @@ export function ExecutiveBriefing({ insightsPayload, isDarkMode = true }: Briefi
 
         {/* Recommended Actions Row (strictly omitted when 0 actions exist) */}
         {hasActions && (
-          <div className="bg-surface border border-border-subtle p-4 rounded-lg mt-2">
-            <h5 className="text-xs font-bold uppercase tracking-wider text-text-primary mb-2 flex items-center gap-1.5">
-              <span>🎯 Recommended Next Actions</span>
+          <div className="space-y-2 pt-3 border-t border-border-subtle/60">
+            <h5 className="text-meta font-semibold uppercase text-text-primary flex items-center gap-1.5">
+              <span><span aria-hidden="true">🎯 </span>Recommended Next Actions</span>
             </h5>
-            <ol className="space-y-2">
+            <ol className="space-y-1.5">
               {actions.map((item, idx) => (
-                <li key={idx} className="text-xs text-text-secondary leading-relaxed flex gap-2.5">
-                  <span className="font-mono bg-surface-secondary border border-border-strong px-1.5 py-0.5 rounded text-text-primary font-bold text-[11px] self-start shadow-2xs">
-                    {idx + 1}
+                <li key={idx} className="text-prose text-text-secondary flex gap-2.5">
+                  <span className="font-mono text-meta tabular-nums text-text-muted self-start">
+                    {idx + 1}.
                   </span>
                   <span className="mt-0.5">{item}</span>
                 </li>
@@ -228,7 +234,7 @@ export function ExecutiveBriefing({ insightsPayload, isDarkMode = true }: Briefi
 
         {/* Analytical Limitations Row (strictly omitted when none exist) */}
         {hasLimitations && (
-          <div className="text-[11px] text-text-muted border-t border-border-subtle/50 pt-3 flex items-start gap-1.5">
+          <div className="text-prose text-text-muted border-t border-border-subtle/50 pt-3 flex items-start gap-1.5">
             <span className="font-semibold text-text-secondary">Limitations:</span>
             <span>{limitations.join(' ')}</span>
           </div>

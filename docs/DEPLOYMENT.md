@@ -7,7 +7,7 @@ QueryMind is a pure static application after build: no server, no database, no c
 ```bash
 npm ci
 npx tsc --noEmit   # must be silent
-npm test           # 301 tests must pass
+npm test           # 435 tests must pass
 npm run build      # emits dist/
 npm run preview    # serves dist/ at http://127.0.0.1:4173 for local checks
 ```
@@ -63,9 +63,15 @@ The production deployment is published as a separate repository containing **onl
 
 ## Deployment checklist
 
-- [ ] `npx tsc --noEmit` silent, `npm test` 301/301, build succeeds.
+- [ ] `npx tsc --noEmit` silent, `npm test` fully passing, build succeeds.
 - [ ] Uploaded file hashes match the build (record them in the deployment README).
 - [ ] No `.env`, datasets, keys or `node_modules` uploaded.
 - [ ] HTTPS forced; `.wasm` served as `application/wasm`.
 - [ ] Cloudflare+R2 split: R2 objects return HTTP 200 with `application/wasm`, correct `Content-Length`, and CORS headers for the deployed origin; a bundled sample query executes end-to-end on the deployed site.
-- [ ] Post-deploy: app loads with no console errors; fetched resources are first-party only (Pages origin + `assets.querymind.in` + one provider endpoint when a query runs); a bundled sample query returns "QUERY MATCHES REQUEST (n CHECKS PASSED)"; an invalid key shows a clear provider error; Telemetry Auditor shows schema-metadata-only request bodies.
+- [ ] Post-deploy: app loads with no console errors from the application's own code; the resources the application requests are first-party only (Pages origin + `assets.querymind.in` + one provider endpoint when a query runs), which is a statement about its artifacts — any script the hosting edge injects is outside that set and is checked separately; a bundled sample query returns the **Verified** badge, whose tooltip reads "Executed SQL answers this request · N integrity checks passed" and whose check count also appears separately in the answer band's facts row; an invalid key shows a clear provider error; Telemetry Auditor shows schema-metadata-only request bodies.
+
+This list was executed against `https://querymind.in` on 2026-11-19 for the v1.2 release; the evidence, the items that stay open, and the exact phrasing that the privacy and analytics documents use are in [verification/v1.2-live-production-verification.md](verification/v1.2-live-production-verification.md). Three qualifications from that run belong next to the checklist, because the checklist's wording is otherwise absolute:
+
+- "No console errors" holds for the cold load and for every verified-sample run. The missing-key guard on an unsupported free-text question deliberately writes one `console.error` line per rejection, and two such lines were logged when two questions were asked that way.
+- "Fetched resources are first-party only" describes what the application requests. In one browser capture the edge had also injected its own analytics script into the served HTML, and that script ran; the cache-bypassing captures served the byte-identical repository artifact with no such script. The Cloudflare dashboard was not opened, so the beacon state remains unmeasured rather than resolved.
+- "An invalid key shows a clear provider error" was not exercised: no key was entered during that pass, so the provider path is covered by the earlier provider audits and the automated tests, not by this run.

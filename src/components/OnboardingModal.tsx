@@ -8,6 +8,7 @@ import {
   ModelMetadata,
 } from '../services/modelRegistry';
 import { inferDatasetSchema, describeUploadAdjustments, PREBUILT_DATASETS } from '../services/sampleData';
+import { useDialogA11y } from '../hooks/useDialogA11y';
 import Papa from 'papaparse';
 import {
   UploadCloud,
@@ -60,6 +61,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogA11y({ isOpen, containerRef: dialogRef, onClose });
 
   if (!isOpen) return null;
 
@@ -176,8 +179,15 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in duration-standard">
-      <div className="relative w-full max-w-xl max-h-[92vh] flex flex-col rounded-2xl border shadow-2xl bg-surface text-text-primary border-border-subtle overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-scrim backdrop-blur-xs animate-in fade-in duration-standard">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={step === 1 ? 'onboarding-step-1-title' : 'onboarding-step-2-title'}
+        tabIndex={-1}
+        className="relative w-full max-w-xl max-h-[92vh] flex flex-col rounded-2xl border shadow-2xl bg-surface text-text-primary border-border-subtle overflow-hidden"
+      >
         {/* Step Progress Indicator */}
         <div className="flex items-center justify-between px-6 pt-5 pb-2 flex-shrink-0 bg-surface">
           <div className="flex items-center gap-2">
@@ -193,7 +203,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                 }`}
               />
             ))}
-            <span className="text-[11px] text-text-muted font-mono ml-2 font-medium">
+            <span role="status" className="text-meta text-text-muted font-mono ml-2 font-medium">
               Step {step} of 2: {step === 1 ? 'AI Provider & Key' : 'Choose Dataset'}
             </span>
           </div>
@@ -201,7 +211,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-1 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-secondary transition-colors duration-fast"
+            aria-label="Skip to playground"
+            className="p-1 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-secondary transition-colors duration-fast focus-ring"
             title="Skip to playground"
           >
             <X className="w-4 h-4" />
@@ -214,18 +225,18 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
           {step === 1 && (
             <div className="space-y-4 animate-in fade-in">
               <div>
-                <h3 className="text-lg font-bold text-text-primary">Configure AI Provider & Key</h3>
-                <p className="text-xs text-text-secondary mt-0.5 leading-relaxed">
+                <h3 id="onboarding-step-1-title" className="text-heading font-semibold text-text-primary">Configure AI Provider & Key</h3>
+                <p className="text-prose text-text-secondary mt-0.5">
                   Select your provider and model, then provide your API key. Keys stay in browser memory for this session only.
                 </p>
               </div>
 
               {/* 1. Choose Provider */}
               <div className="space-y-2">
-                <label className="text-[11px] font-semibold uppercase tracking-wider text-text-muted block">
+                <span id="onboarding-provider-label" className="text-meta font-semibold uppercase text-text-muted block">
                   1. Select AI Provider
-                </label>
-                <div className="grid grid-cols-3 gap-2">
+                </span>
+                <div role="group" aria-labelledby="onboarding-provider-label" className="grid grid-cols-3 gap-2">
                   {PROVIDERS_CONFIG.map((p) => {
                     const isSelected = provider === p.id;
                     const isFree = p.category === 'free_tier_available';
@@ -234,17 +245,18 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                         key={p.id}
                         type="button"
                         onClick={() => handleProviderSelect(p.id)}
-                        className={`btn-interactive p-3 rounded-xl border text-left flex flex-col justify-between shadow-2xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${
+                        aria-pressed={isSelected}
+                        className={`btn-interactive p-3 rounded-xl border text-left flex flex-col justify-between shadow-2xs focus-ring ${
                           isSelected
                             ? 'border-badge-accent-border bg-badge-accent-bg text-badge-accent-fg font-semibold'
                             : 'border-border-subtle bg-surface text-text-secondary hover:border-border-strong hover:text-text-primary hover:bg-surface-secondary'
                         }`}
                       >
                         <div className="flex items-center justify-between w-full">
-                          <span className="text-xs font-bold text-text-primary truncate">{p.name}</span>
+                          <span className="text-xs font-semibold text-text-primary truncate">{p.name}</span>
                         </div>
                         <span
-                          className={`text-[9px] font-semibold px-1.5 py-0.5 rounded mt-2 self-start ${
+                          className={`text-meta font-semibold px-1.5 py-0.5 rounded mt-2 self-start ${
                             isFree
                               ? 'bg-badge-success-bg text-badge-success-fg border border-badge-success-border'
                               : 'bg-badge-info-bg text-badge-info-fg border border-badge-info-border'
@@ -261,48 +273,49 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               {/* 2. Choose Model */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+                  <span id="onboarding-model-group-label" className="text-meta font-semibold uppercase text-text-muted">
                     2. Model Selection ({currentProviderConfig.name})
-                  </label>
-                  <span className="text-[10px] text-text-muted font-mono">
+                  </span>
+                  <span className="text-meta text-text-muted font-mono">
                     Default: {DEFAULT_MODELS[provider]}
                   </span>
                 </div>
 
-                <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+                <div role="radiogroup" aria-labelledby="onboarding-model-group-label" className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
                   {currentProviderConfig.models.map((m: ModelMetadata) => {
                     const isSelected = model === m.id;
                     return (
                       <div
                         key={m.id}
                         onClick={() => setModel(m.id)}
-                        className={`btn-interactive p-2.5 rounded-lg border cursor-pointer flex items-center justify-between gap-2 shadow-2xs ${
+                        className={`btn-interactive p-2.5 rounded-lg border cursor-pointer flex flex-wrap items-center justify-between gap-2 shadow-2xs ${
                           isSelected
                             ? 'border-badge-accent-border bg-badge-accent-bg text-text-primary'
                             : 'border-border-subtle bg-surface text-text-secondary hover:border-border-strong hover:text-text-primary hover:bg-surface-secondary'
                         }`}
                       >
-                        <div className="flex items-center gap-2 min-w-0">
+                        <label htmlFor={`onboarding-model-option-${m.id}`} className="flex items-center gap-2 min-w-0 cursor-pointer">
                           <input
+                            id={`onboarding-model-option-${m.id}`}
                             type="radio"
                             name="onboarding_model"
                             checked={isSelected}
                             onChange={() => setModel(m.id)}
-                            className="text-accent focus:ring-accent cursor-pointer"
+                            className="text-accent focus-ring cursor-pointer flex-shrink-0"
                           />
                           <div className="truncate">
                             <span className="text-xs font-semibold text-text-primary">{m.name}</span>
-                            <span className="text-[10px] text-text-muted font-mono ml-1.5 truncate">({m.id})</span>
+                            <span className="text-meta text-text-muted font-mono ml-1.5 truncate">({m.id})</span>
                           </div>
-                        </div>
+                        </label>
 
                         <div className="flex items-center gap-1.5 flex-shrink-0">
                           {m.recommended && (
-                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-badge-accent-bg text-badge-accent-fg border border-badge-accent-border">
+                            <span className="text-meta font-semibold px-1.5 py-0.5 rounded bg-badge-accent-bg text-badge-accent-fg border border-badge-accent-border">
                               RECOMMENDED
                             </span>
                           )}
-                          <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${getBadgeClass(m.badge)}`}>
+                          <span className={`text-meta font-semibold px-1.5 py-0.5 rounded ${getBadgeClass(m.badge)}`}>
                             {m.badge}
                           </span>
                         </div>
@@ -315,14 +328,14 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               {/* 3. API Key Input & Test */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+                  <label htmlFor="onboarding-api-key-input" className="text-meta font-semibold uppercase text-text-muted">
                     3. {currentProviderConfig.name} API Key
                   </label>
                   <a
                     href={currentProviderConfig.docsUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-[11px] text-accent hover:underline inline-flex items-center gap-1 font-medium"
+                    className="text-xs text-accent hover:underline inline-flex items-center gap-1 font-medium"
                   >
                     {currentProviderConfig.docsLabel} <ExternalLink className="w-3 h-3" />
                   </a>
@@ -330,17 +343,19 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
 
                 <div className="relative">
                   <input
+                    id="onboarding-api-key-input"
                     type={showKey ? 'text' : 'password'}
                     value={key}
                     onChange={(e) => setKey(e.target.value)}
                     placeholder={currentProviderConfig.placeholder}
-                    className="w-full text-xs font-mono rounded-lg pl-3 pr-24 py-2.5 border outline-none transition-all duration-fast bg-surface border-border-strong text-text-primary focus:border-accent focus:ring-1 focus:ring-accent"
+                    className="w-full text-xs font-mono rounded-lg pl-3 pr-24 py-2.5 border transition-all duration-fast bg-surface border-field-border text-text-primary focus:border-accent focus-ring"
                   />
                   <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
                     <button
                       type="button"
                       onClick={() => setShowKey(!showKey)}
-                      className="p-1 text-text-muted hover:text-text-primary"
+                      aria-label={showKey ? 'Hide key' : 'Show key'}
+                      className="p-1 text-text-muted hover:text-text-primary rounded focus-ring"
                     >
                       {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                     </button>
@@ -348,7 +363,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                       type="button"
                       onClick={handleTestConnection}
                       disabled={testStatus === 'testing' || !key.trim()}
-                      className="btn-interactive text-[11px] font-semibold px-2 py-1 rounded bg-amber-500 text-amber-950 border border-amber-600/50 hover:bg-amber-400 disabled:opacity-40 disabled:hover:bg-amber-500 transition-colors shadow-2xs"
+                      className="btn-interactive text-xs font-semibold px-2 py-1 rounded bg-accent text-accent-ink border border-field-border hover:bg-accent-hover disabled:bg-surface-secondary disabled:text-text-muted disabled:hover:bg-surface-secondary transition-colors shadow-2xs focus-ring"
                     >
                       {testStatus === 'testing' ? 'Testing...' : 'Test Key'}
                     </button>
@@ -356,13 +371,13 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                 </div>
 
                 {testStatus === 'success' && (
-                  <div className="p-2.5 rounded-lg text-xs bg-badge-success-bg border border-badge-success-border text-badge-success-fg flex items-center gap-1.5 animate-in fade-in shadow-2xs">
+                  <div role="status" className="p-2.5 rounded-lg text-xs bg-badge-success-bg border border-badge-success-border text-badge-success-fg flex items-center gap-1.5 animate-in fade-in shadow-2xs">
                     <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 text-success" />
                     <span>{testMessage}</span>
                   </div>
                 )}
                 {testStatus === 'error' && (
-                  <div className="p-2.5 rounded-lg text-xs bg-badge-error-bg border border-badge-error-border text-badge-error-fg flex items-center gap-1.5 animate-in fade-in shadow-2xs">
+                  <div role="alert" className="p-2.5 rounded-lg text-xs bg-badge-error-bg border border-badge-error-border text-badge-error-fg flex items-center gap-1.5 animate-in fade-in shadow-2xs">
                     <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 text-error" />
                     <span>{testMessage}</span>
                   </div>
@@ -370,18 +385,18 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
 
                 {/* Opt-in persistent storage checkbox */}
                 <div className="pt-1.5 border-t border-border-subtle/50 mt-1.5">
-                  <label className="flex items-center gap-2 cursor-pointer text-[11px] text-text-secondary select-none hover:text-text-primary transition-colors">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs text-text-secondary select-none hover:text-text-primary transition-colors">
                     <input
                       type="checkbox"
                       checked={rememberKey}
                       onChange={(e) => setRememberKey(e.target.checked)}
-                      className="rounded border-border-strong text-accent focus:ring-accent w-3.5 h-3.5"
+                      className="rounded border-border-strong text-accent w-3.5 h-3.5 focus-ring"
                     />
                     <span>Remember API key in browser (opt-in · unchecked keeps key in volatile session memory only)</span>
                   </label>
                 </div>
 
-                <p className="text-[10.5px] text-text-muted">
+                <p className="text-prose text-text-muted">
                   Key optional for demo: the suggested questions on preloaded datasets run verified queries locally.
                   Custom questions, uploads and free-text follow-ups need a provider key.
                 </p>
@@ -392,14 +407,14 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="btn-interactive text-xs text-text-muted hover:text-text-primary"
+                  className="btn-interactive text-xs text-text-muted hover:text-text-primary focus-ring rounded-lg"
                 >
                   Skip to Playground
                 </button>
                 <button
                   type="button"
                   onClick={() => setStep(2)}
-                  className="btn-interactive px-5 py-2 rounded-xl bg-accent hover:bg-accent-hover text-white font-medium text-xs flex items-center gap-2 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                  className="btn-interactive px-5 py-2 rounded-xl bg-accent hover:bg-accent-hover text-accent-ink font-medium text-xs flex items-center gap-2 shadow-sm focus-ring"
                 >
                   <span>Continue to Dataset</span>
                   <ArrowRight className="w-3.5 h-3.5" />
@@ -412,8 +427,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
           {step === 2 && (
             <div className="space-y-4 animate-in fade-in">
               <div>
-                <h3 className="text-lg font-bold text-text-primary">Select or Upload Dataset</h3>
-                <p className="text-xs text-text-secondary mt-0.5 leading-relaxed">
+                <h3 id="onboarding-step-2-title" className="text-heading font-semibold text-text-primary">Select or Upload Dataset</h3>
+                <p className="text-prose text-text-secondary mt-0.5">
                   Your dataset is parsed and queried locally in this browser using DuckDB-WASM. Its
                   rows are never sent anywhere; only your question and column-level statistics reach
                   the AI provider you configure.
@@ -421,34 +436,35 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               </div>
 
               {/* Upload Drop Zone */}
-              <div
+              <button
+                type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="btn-interactive p-6 rounded-xl border-2 border-dashed text-center cursor-pointer border-border-strong hover:border-accent bg-surface-secondary/50 shadow-2xs"
+                className="btn-interactive block w-full p-6 rounded-xl border-2 border-dashed text-center cursor-pointer border-border-strong hover:border-accent bg-surface-secondary/50 shadow-2xs focus-ring"
               >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".csv,.tsv"
-                  onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
-                  className="hidden"
-                />
                 <UploadCloud className="w-8 h-8 mx-auto text-accent mb-2" />
                 <span className="text-xs font-semibold block text-text-primary">Drop your CSV here, or browse files</span>
-                <span className="text-[10.5px] text-text-muted mt-0.5 block">
+                <span className="text-meta text-text-muted mt-0.5 block">
                   Loaded straight into browser memory · rows never leave this device
                 </span>
                 {isUploading && <span className="text-xs text-accent mt-2 block font-medium">Parsing CSV...</span>}
-              </div>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.tsv"
+                onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
+                className="hidden"
+              />
 
               {uploadError && (
-                <div className="p-2.5 rounded-lg text-xs bg-badge-error-bg border border-badge-error-border text-badge-error-fg flex items-center gap-1.5 shadow-2xs">
+                <div role="alert" className="p-2.5 rounded-lg text-xs bg-badge-error-bg border border-badge-error-border text-badge-error-fg flex items-center gap-1.5 shadow-2xs">
                   <AlertCircle className="w-3.5 h-3.5 text-error" />
                   <span>{uploadError}</span>
                 </div>
               )}
 
               {uploadNotice && (
-                <div className="p-2.5 rounded-lg text-xs bg-badge-warning-bg border border-badge-warning-border text-badge-warning-fg flex items-start gap-1.5 shadow-2xs">
+                <div role="status" className="p-2.5 rounded-lg text-xs bg-badge-warning-bg border border-badge-warning-border text-badge-warning-fg flex items-start gap-1.5 shadow-2xs">
                   <AlertCircle className="w-3.5 h-3.5 text-warning flex-shrink-0 mt-0.5" />
                   <span className="leading-relaxed">{uploadNotice}</span>
                 </div>
@@ -456,7 +472,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
 
               {/* Preloaded Sample Datasets */}
               <div className="space-y-2">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted block">
+                <span className="text-meta font-semibold uppercase text-text-muted block">
                   Or choose a preloaded sample dataset
                 </span>
                 <div className="grid grid-cols-2 gap-2.5">
@@ -466,19 +482,20 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                       setSelectedDataset(PREBUILT_DATASETS.saas.dataset);
                       setUploadNotice(null);
                     }}
-                    className={`btn-interactive p-3 rounded-xl border text-left shadow-2xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${
+                    aria-pressed={selectedDataset?.id === 'customers'}
+                    className={`btn-interactive p-3 rounded-xl border text-left shadow-2xs focus-ring ${
                       selectedDataset?.id === 'customers'
                         ? 'border-badge-accent-border bg-badge-accent-bg text-badge-accent-fg font-semibold'
                         : 'border-border-subtle bg-surface text-text-secondary hover:border-border-strong hover:text-text-primary hover:bg-surface-secondary'
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-text-primary">SaaS Customer MRR</span>
+                      <span className="text-xs font-semibold text-text-primary">SaaS Customer MRR</span>
                       {selectedDataset?.id === 'customers' && (
                         <Check className="w-3.5 h-3.5 text-accent" />
                       )}
                     </div>
-                    <div className="text-[10.5px] text-text-muted mt-1">
+                    <div className="text-meta tabular-nums text-text-muted mt-1">
                       {PREBUILT_DATASETS.saas.dataset.rowCount} rows · Subscriptions & Churn
                     </div>
                   </button>
@@ -489,19 +506,20 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                       setSelectedDataset(PREBUILT_DATASETS.ecommerce.dataset);
                       setUploadNotice(null);
                     }}
-                    className={`btn-interactive p-3 rounded-xl border text-left shadow-2xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${
+                    aria-pressed={selectedDataset?.id === 'orders'}
+                    className={`btn-interactive p-3 rounded-xl border text-left shadow-2xs focus-ring ${
                       selectedDataset?.id === 'orders'
                         ? 'border-badge-accent-border bg-badge-accent-bg text-badge-accent-fg font-semibold'
                         : 'border-border-subtle bg-surface text-text-secondary hover:border-border-strong hover:text-text-primary hover:bg-surface-secondary'
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-text-primary">E-Commerce Orders</span>
+                      <span className="text-xs font-semibold text-text-primary">E-Commerce Orders</span>
                       {selectedDataset?.id === 'orders' && (
                         <Check className="w-3.5 h-3.5 text-accent" />
                       )}
                     </div>
-                    <div className="text-[10.5px] text-text-muted mt-1">
+                    <div className="text-meta tabular-nums text-text-muted mt-1">
                       {PREBUILT_DATASETS.ecommerce.dataset.rowCount} rows · Sales & Profitability
                     </div>
                   </button>
@@ -510,7 +528,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
 
               {/* Active Selection Confirmation Card */}
               {selectedDataset && (
-                <div className="p-3 rounded-xl border border-badge-success-border bg-badge-success-bg text-badge-success-fg text-xs flex items-center gap-2.5 shadow-2xs">
+                <div role="status" className="p-3 rounded-xl border border-badge-success-border bg-badge-success-bg text-badge-success-fg text-xs tabular-nums flex items-center gap-2.5 shadow-2xs">
                   <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-success" />
                   <span className="truncate">
                     Ready to analyze: <strong className="text-text-primary">{selectedDataset.name}</strong> ({selectedDataset.rowCount.toLocaleString()} rows, {selectedDataset.columns.length} columns)
@@ -523,14 +541,14 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setStep(1)}
-                  className="btn-interactive px-3.5 py-1.5 rounded-lg border text-xs font-medium border-border-strong bg-surface text-text-secondary hover:text-text-primary hover:bg-surface-elevated flex items-center gap-1.5 shadow-2xs"
+                  className="btn-interactive px-3.5 py-1.5 rounded-lg border text-xs font-medium border-border-strong bg-surface text-text-secondary hover:text-text-primary hover:bg-surface-elevated flex items-center gap-1.5 shadow-2xs focus-ring"
                 >
                   <ArrowLeft className="w-3 h-3" /> Back
                 </button>
                 <button
                   type="button"
                   onClick={handleFinish}
-                  className="btn-interactive px-5 py-2 rounded-xl bg-accent hover:bg-accent-hover text-white font-medium text-xs flex items-center gap-2 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                  className="btn-interactive px-5 py-2 rounded-xl bg-accent hover:bg-accent-hover text-accent-ink font-medium text-xs flex items-center gap-2 shadow-sm focus-ring"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>Start Analyzing</span>

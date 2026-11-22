@@ -104,6 +104,8 @@ Triggers are deliberately narrow (the product-level audit requires "product" and
 
 **No measurement is claimed here as evidence that the beacon is gone — it is not gone until the setting is turned off and re-verified.**
 
+**Measurement update, 2026-11-19 (later pass, recorded elsewhere).** After the release was pushed and deployed, the live site was fetched and observed in a browser repeatedly. The result was not uniform, and is reported as measured. One capture showed the beacon: the served HTML carried a third-party script from `static.cloudflareinsights.com`, `window.__cfBeacon` was defined, and the page sent a same-origin `POST /cdn-cgi/rum`. The captures taken afterwards, with the browser cache bypassed, showed none of it: the served document was 1,790 bytes and byte-identical to `query_prod/index.html`, held exactly one script element (the app bundle), `window.__cfBeacon` was undefined, and six cache-bypassing refetches from inside the page all returned that same single-script document. `cloudflareinsights`, `beacon.min.js`, `__cfBeacon`, `cdn-cgi/rum` and `gtag` appear in no file of either repository. A `window.RumSDK` global with an `ArmsRum` key was present in the browser's page context throughout, including in the captures where no third-party script was loaded, and could not be attributed to QueryMind — no markup, no bundle string, no request. No Cloudflare dashboard was opened and no setting was changed, so this update establishes detection, not configuration: **the finding in this section stays open**, because a beacon was observed on the deployed site during the verification pass and nothing here explains why other captures were clean. Full wording and limits: [v1.2-live-production-verification.md](v1.2-live-production-verification.md), sections 2 and 3.
+
 ---
 
 ## 4. Release verification
@@ -184,6 +186,8 @@ I did not open or change any Cloudflare setting. To remove the injected analytic
 1. **Caching → Purge Everything** for the zone (the injected markup is inside the served HTML).
 2. Tell me the change is done. I will then re-fetch `https://querymind.in` and assert, from the live HTML and the network log, that no `cloudflareinsights.com`, `__cfBeacon`, `RumSDK.ArmsRum`, `__ARMS_RUM_INJECTED__` or `POST /cdn-cgi/rum` remains, and only after that evidence will `SECURITY.md` and the Telemetry Auditor copy be updated.
 
+**Status after the v1.2 live pass.** The re-fetch and the marker assertions were performed on 2026-11-19, on the deployed release, without any dashboard change being reported or inspected — and step D therefore is **not complete**: no dashboard setting was confirmed. One capture of the deployed site still showed the full beacon chain (edge-injected `static.cloudflareinsights.com` script, `__cfBeacon`, same-origin `POST /cdn-cgi/rum`), while the cache-bypassing captures that followed served the repository artifact unchanged, with the app bundle as the page's only script and none of the listed markers present. `SECURITY.md`, `PRIVACY.md`, `ARCHITECTURE.md`, `DEPLOYMENT.md` and the deployment repository README have been reconciled to exactly that position: the application's artifacts carry no analytics code, and the deployment's beacon state is unmeasured because the dashboard was never opened. Two further notes carry into that wording. The auditor self-hosting sentence is application source and was deliberately not edited in a documentation-only pass. And the D.2 list treats `RumSDK.ArmsRum` as a beacon marker, whereas the live pass found a global of that shape in the browser's page context even where no third-party script was loaded at all — which is why the reconciled documents describe it as an unattributed observation rather than as either a beacon trace or a clean absence.
+
 ---
 
 ## 7. Open findings deliberately left out of this release
@@ -192,10 +196,12 @@ I did not open or change any Cloudflare setting. To remove the injected analytic
 |---|---|
 | The executive summary could mislabel the ranked metric ("5 orders were ranked by total sales … leads with $3,798" for a profit-ranked plan) | **Closed after this report was written.** The metric is now read from the executed query instead of inferred, with `tests/ranking_metric_label.test.ts` holding the fix; the row is kept as the finding that scoped that work |
 | The icon-only Upload button has no accessible name below 640 px | a11y polish, no functional impact; out of the three-defect scope |
-| Sidebar "Zero telemetry · In-memory DuckDB", the header "no app telemetry" tooltip and the auditor self-hosting sentence | must be reconciled with the live measurement in step D, not before |
+| Sidebar "Zero telemetry · In-memory DuckDB", the header "no app telemetry" tooltip and the auditor self-hosting sentence | must be reconciled with the live measurement in step D, not before. The live measurement happened on 2026-11-19 and the documentation was reconciled to it; these three sentences are `src/` code, so they stay unchanged until a source edit is separately approved. What they currently assert, and what the measurement supports, is recorded in [v1.2-live-production-verification.md](v1.2-live-production-verification.md) section 10 |
 
 ---
 
 ## 8. Approval state
 
 Changes are committed **locally only** in `query_main` and `query_prod`. Nothing has been pushed. Pushing either repository, and deploying, awaits explicit approval.
+
+**Superseded on 2026-11-19:** approval was given, both repositories were pushed (`query_main` → `a49532a`, `query_prod` → `7dcdb25`), Cloudflare Pages deployed the release, and the live verification of that deployment is recorded in [v1.2-live-production-verification.md](v1.2-live-production-verification.md).

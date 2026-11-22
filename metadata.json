@@ -1,6 +1,6 @@
 {
   "name": "QueryMind",
-  "description": "Browser-native natural language to SQL analytics engine with privacy-first BYOK and zero backend data retention.",
+  "description": "Browser-native natural language to SQL analytics with bring-your-own-key. Queries run on DuckDB-WASM in your browser — there is no QueryMind server in the path — and provider-side retention is governed by the provider you configure.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

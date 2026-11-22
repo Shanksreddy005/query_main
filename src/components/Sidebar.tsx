@@ -17,6 +17,7 @@ import {
   Trash2,
   Copy,
   Check,
+  AlertCircle,
   Search,
   Sparkles,
   Play,
@@ -26,6 +27,7 @@ import { PREBUILT_DATASETS } from '../services/sampleData';
 import { QueryMindLogo } from './QueryMindLogo';
 import { LocalQueryStorage, UserSavedQuery } from '../services/localQueryStorage';
 import { LibraryShareEngine } from '../services/libraryShareEngine';
+import { useDialogA11y } from '../hooks/useDialogA11y';
 
 interface SidebarProps {
   dataset: Dataset | null;
@@ -57,8 +59,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [filterActiveTableOnly, setFilterActiveTableOnly] = useState<boolean>(false);
   const [copiedQueryId, setCopiedQueryId] = useState<string | null>(null);
-  const [toastStatus, setToastStatus] = useState<string | null>(null);
+  const [toastStatus, setToastStatus] = useState<{ text: string; tone: 'ok' | 'error' } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const drawerRef = useRef<HTMLElement>(null);
+  // One owner for the dismissal timer: separate setTimeout calls per action let an older timer wipe
+  // a newer message off the screen, and neither was cancelled when the panel unmounted.
+  const toastTimerRef = useRef<number | null>(null);
+  const copiedTimerRef = useRef<number | null>(null);
+
+  const showToast = (text: string, tone: 'ok' | 'error' = 'ok', visibleMs = 2800) => {
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+    setToastStatus({ text, tone });
+    toastTimerRef.current = window.setTimeout(() => {
+      toastTimerRef.current = null;
+      setToastStatus(null);
+    }, visibleMs);
+  };
+
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+      if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current);
+    },
+    []
+  );
+
+  useDialogA11y({ isOpen: isOpenMobile, containerRef: drawerRef, onClose: onCloseMobile });
 
   // Live listener for updates to LocalQueryStorage
   useEffect(() => {
@@ -89,29 +115,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
-  const handleCopySql = (e: React.MouseEvent, q: UserSavedQuery) => {
+  const handleCopySql = async (e: React.MouseEvent, q: UserSavedQuery) => {
     e.stopPropagation();
-    navigator.clipboard.writeText(q.successfulSql);
-    setCopiedQueryId(q.userQuery);
-    setToastStatus('SQL copied to clipboard');
-    setTimeout(() => {
-      setCopiedQueryId(null);
-      setToastStatus(null);
-    }, 2000);
+    try {
+      await navigator.clipboard.writeText(q.successfulSql);
+      if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current);
+      setCopiedQueryId(q.userQuery);
+      copiedTimerRef.current = window.setTimeout(() => {
+        copiedTimerRef.current = null;
+        setCopiedQueryId(null);
+      }, 2000);
+      showToast('SQL copied to clipboard');
+    } catch {
+      // writeText rejects when the document lost focus or the permission was denied; promising a
+      // clipboard the user never received is a false confirmation.
+      showToast('Clipboard blocked by the browser — open the blueprint to copy its SQL.', 'error');
+    }
   };
 
   const handleDeleteSavedQuery = (e: React.MouseEvent, q: UserSavedQuery) => {
     e.stopPropagation();
     storage.deleteSavedQuery(q.userQuery, q.schemaContextFingerprint);
-    setToastStatus('Removed from memory');
-    setTimeout(() => setToastStatus(null), 2500);
+    showToast('Removed from memory');
   };
 
   const handleExportLibrary = (e: React.MouseEvent) => {
     e.stopPropagation();
     const res = shareEngine.exportLocalLibraryToFile();
-    setToastStatus(res.message);
-    setTimeout(() => setToastStatus(null), 3000);
+    showToast(res.message, res.success ? 'ok' : 'error');
   };
 
   const handleImportClick = (e: React.MouseEvent) => {
@@ -125,8 +156,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
     shareEngine.importLibraryFromFile(file, (res) => {
       setSavedQueries(storage.getSavedQueries());
-      setToastStatus(res.message);
-      setTimeout(() => setToastStatus(null), 3500);
+      // Import runs asynchronously against the file, so the result arrives after the click; a
+      // rejected file has to read differently from one that added blueprints.
+      showToast(res.message, res.success ? 'ok' : 'error', 3600);
     });
 
     e.target.value = '';
@@ -170,13 +202,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
         className="lg:hidden flex items-center justify-between p-4 flex-shrink-0"
         style={{ borderBottom: '1px solid var(--border)' }}
       >
-        <a href="#" className="flex items-center gap-2">
+        <a href="#" aria-label="QueryMind home" className="flex items-center gap-2 focus-ring">
           <QueryMindLogo size={22} isDarkMode={isDarkMode} variant="horizontal" />
         </a>
         <button
           onClick={onCloseMobile}
-          className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-secondary transition-colors duration-fast cursor-pointer"
-          aria-label="Close Sidebar"
+          className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-secondary transition-colors duration-fast cursor-pointer focus-ring"
+          aria-label="Close navigation drawer"
         >
           <X className="w-4 h-4" />
         </button>
@@ -188,7 +220,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div>
             <div className="section-label mb-2 flex items-center justify-between">
               <span>Active Table</span>
-              <span style={{ color: 'var(--success)', fontSize: '10px', fontWeight: 500 }}>
+              <span className="text-meta font-medium tabular-nums" style={{ color: 'var(--success)' }}>
                 {dataset.rowCount.toLocaleString()} rows
               </span>
             </div>
@@ -206,7 +238,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <Table className="w-3.5 h-3.5 text-accent flex-shrink-0" />
                 <span className="font-mono text-xs font-semibold text-text-primary">{dataset.tableName}</span>
               </div>
-              <p className="text-[11px] text-text-muted mt-1 truncate">{dataset.name}</p>
+              <p className="text-meta text-text-muted mt-1 truncate">{dataset.name}</p>
             </div>
           </div>
         )}
@@ -216,16 +248,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div>
             <div className="section-label mb-2 flex items-center justify-between">
               <span>Columns ({dataset.columns.length})</span>
-              <span className="text-[10px] text-text-muted font-medium normal-case">Click to insert</span>
+              <span className="text-meta text-text-muted font-medium normal-case">Click to insert</span>
             </div>
 
             <div className="space-y-0.5">
               {dataset.columns.map((col) => (
                 <div
                   key={col.name}
+                  role="button"
                   onClick={() => onInsertColumn(col.name)}
                   title={`Type: ${col.type}\nSamples: ${col.sampleValues.slice(0, 3).join(', ')}`}
-                  className="group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-mono cursor-pointer transition-colors duration-fast hover:bg-surface-secondary text-text-secondary hover:text-text-primary focus-visible:outline-none"
+                  className="group flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-mono cursor-pointer transition-colors duration-fast hover:bg-surface-secondary text-text-secondary hover:text-text-primary focus-ring"
                   tabIndex={0}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
@@ -239,7 +272,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <span className="truncate group-hover:text-text-primary transition-colors duration-fast">{col.name}</span>
                   </div>
                   <span
-                    className="text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded-md tracking-wide flex-shrink-0"
+                    className="text-meta font-mono font-semibold uppercase px-1.5 py-0.5 rounded-md flex-shrink-0"
                     style={{
                       background: 'var(--surface-secondary)',
                       border: '1px solid var(--border)',
@@ -278,13 +311,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 key={ds.id}
                 type="button"
                 onClick={ds.onClick}
-                className="btn-interactive w-full text-left px-3 py-2.5 rounded-xl text-xs font-medium flex items-center justify-between transition-all duration-fast focus-visible:outline-none cursor-pointer"
+                className="btn-interactive w-full text-left px-3 py-2.5 rounded-xl text-xs font-medium flex items-center justify-between transition-all duration-fast focus-ring cursor-pointer"
+                aria-current={ds.active ? 'true' : undefined}
                 style={
                   ds.active
                     ? {
-                        background: 'rgba(245,158,11,0.1)',
-                        border: '1px solid rgba(245,158,11,0.3)',
-                        color: isDarkMode ? '#FCD34D' : '#92400E',
+                        background: 'var(--badge-accent-bg)',
+                        border: '1px solid var(--badge-accent-border)',
+                        color: 'var(--badge-accent-fg)',
                       }
                     : {
                         background: 'var(--surface-secondary)',
@@ -295,7 +329,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 <div className="truncate">
                   <span className="block font-semibold">{ds.label}</span>
-                  <span className="text-[10px] opacity-60 font-normal">{ds.sub}</span>
+                  <span className="text-meta font-normal">{ds.sub}</span>
                 </div>
                 <ChevronRight className="w-3.5 h-3.5 opacity-40 flex-shrink-0" />
               </button>
@@ -306,11 +340,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Query Memory & History Section */}
         <div>
           {/* Segmented Tab Switcher */}
-          <div className="flex items-center gap-1 p-0.5 rounded-lg bg-surface-secondary border border-border-subtle mb-3">
+          <div role="group" aria-label="Query memory view" className="flex items-center gap-1 p-0.5 rounded-lg bg-surface-secondary border border-border-subtle mb-3">
             <button
               type="button"
               onClick={() => setActiveTab('saved')}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-xs font-medium transition-all duration-fast cursor-pointer ${
+              aria-pressed={activeTab === 'saved'}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-xs font-medium transition-all duration-fast cursor-pointer focus-ring ${
                 activeTab === 'saved'
                   ? 'bg-surface text-accent font-semibold shadow-2xs'
                   : 'text-text-muted hover:text-text-primary'
@@ -318,7 +353,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <Bookmark className="w-3 h-3 text-accent" />
               <span>Saved Memory</span>
-              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-accent/15 text-accent">
+              <span className="text-meta font-mono px-1.5 py-0.2 rounded-full bg-accent/15 text-accent">
                 {savedQueries.length}
               </span>
             </button>
@@ -326,7 +361,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <button
               type="button"
               onClick={() => setActiveTab('history')}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-xs font-medium transition-all duration-fast cursor-pointer ${
+              aria-pressed={activeTab === 'history'}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-xs font-medium transition-all duration-fast cursor-pointer focus-ring ${
                 activeTab === 'history'
                   ? 'bg-surface text-text-primary font-semibold shadow-2xs'
                   : 'text-text-muted hover:text-text-primary'
@@ -334,19 +370,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <Clock className="w-3 h-3" />
               <span>History</span>
-              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-surface-secondary text-text-muted">
+              <span className="text-meta font-mono px-1.5 py-0.2 rounded-full bg-surface-secondary text-text-muted">
                 {history.length}
               </span>
             </button>
           </div>
 
           {/* Feedback banner if copying/deleting/exporting */}
-          {toastStatus && (
-            <div className="mb-2.5 px-2.5 py-1.5 rounded-lg text-[10px] font-medium bg-badge-accent-bg text-badge-accent-fg border border-badge-accent-border flex items-center gap-1.5 animate-in fade-in">
-              <Check className="w-3 h-3 text-accent" />
-              <span className="truncate">{toastStatus}</span>
-            </div>
-          )}
+          {/* The live region stays mounted so a message that appears is announced; only the box moves. */}
+          <div role="status" aria-live="polite">
+            {toastStatus && (
+              <div
+                className={`mb-2.5 px-2.5 py-1.5 rounded-lg text-meta font-medium border flex items-start gap-1.5 animate-in fade-in ${
+                  toastStatus.tone === 'error'
+                    ? 'bg-badge-error-bg text-badge-error-fg border-badge-error-border'
+                    : 'bg-badge-accent-bg text-badge-accent-fg border-badge-accent-border'
+                }`}
+              >
+                {toastStatus.tone === 'error' ? (
+                  <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" aria-hidden="true" />
+                ) : (
+                  <Check className="w-3 h-3 mt-0.5 text-accent flex-shrink-0" aria-hidden="true" />
+                )}
+                <span>{toastStatus.text}</span>
+              </div>
+            )}
+          </div>
 
           {/* Tab 1: Sandboxed Memory (Saved Queries) */}
           {activeTab === 'saved' && (
@@ -358,9 +407,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <input
                     type="text"
                     placeholder="Search blueprints..."
+                    aria-label="Search saved queries"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full text-[11px] pl-6 pr-2 py-1 rounded-md border border-border-subtle bg-surface text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+                    className="w-full text-xs pl-6 pr-2 py-1 rounded-md border border-field-border bg-surface text-text-primary placeholder:text-text-muted focus:border-accent focus-ring"
                   />
                 </div>
 
@@ -368,7 +418,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   type="button"
                   onClick={handleExportLibrary}
                   title="Export saved queries as JSON"
-                  className="btn-interactive p-1.5 rounded-md border border-border-subtle bg-surface hover:bg-surface-elevated text-text-secondary hover:text-accent cursor-pointer transition-colors"
+                  aria-label="Export saved queries as JSON"
+                  className="btn-interactive p-1.5 rounded-md border border-border-subtle bg-surface hover:bg-surface-elevated text-text-secondary hover:text-accent cursor-pointer transition-colors focus-ring"
                 >
                   <Download className="w-3.5 h-3.5" />
                 </button>
@@ -377,7 +428,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   type="button"
                   onClick={handleImportClick}
                   title="Import queries from JSON"
-                  className="btn-interactive p-1.5 rounded-md border border-border-subtle bg-surface hover:bg-surface-elevated text-text-secondary hover:text-accent cursor-pointer transition-colors"
+                  aria-label="Import queries from JSON"
+                  className="btn-interactive p-1.5 rounded-md border border-border-subtle bg-surface hover:bg-surface-elevated text-text-secondary hover:text-accent cursor-pointer transition-colors focus-ring"
                 >
                   <Upload className="w-3.5 h-3.5" />
                 </button>
@@ -385,12 +437,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
               {/* Table Scope Filter Pill */}
               {currentFingerprint && matchingThisTableCount > 0 && (
-                <div className="flex items-center justify-between text-[10px] px-1 pt-0.5">
+                <div className="flex items-center justify-between text-meta px-1 pt-0.5">
                   <span className="text-text-muted">Scope filter:</span>
                   <button
                     type="button"
                     onClick={() => setFilterActiveTableOnly(!filterActiveTableOnly)}
-                    className={`px-2 py-0.5 rounded-full border text-[10px] font-medium transition-colors cursor-pointer ${
+                    aria-pressed={filterActiveTableOnly}
+                    className={`px-2 py-0.5 rounded-full border text-meta font-medium transition-colors cursor-pointer focus-ring ${
                       filterActiveTableOnly
                         ? 'bg-badge-success-bg text-badge-success-fg border-badge-success-border font-semibold'
                         : 'bg-surface border-border-subtle text-text-muted hover:text-text-primary'
@@ -405,10 +458,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
               {/* Saved Queries List */}
               {displayedSavedQueries.length === 0 ? (
-                <div className="p-4 rounded-xl border border-dashed border-border-subtle text-center text-[11px] text-text-muted space-y-1.5 my-2">
+                <div className="p-4 rounded-xl border border-dashed border-border-subtle text-center text-meta text-text-muted space-y-1.5 my-2">
                   <Bookmark className="w-5 h-5 mx-auto opacity-40 text-accent" />
                   <p className="font-medium text-text-secondary">No saved blueprints found</p>
-                  <p className="text-[10px] text-text-muted leading-relaxed">
+                  <p className="text-meta text-text-muted leading-relaxed">
                     {searchQuery
                       ? 'No queries match your search query.'
                       : 'Run any query and click "Save to Memory" to bookmark reusable SQL blueprints.'}
@@ -416,7 +469,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <button
                     type="button"
                     onClick={handleImportClick}
-                    className="inline-flex items-center gap-1 mt-1 text-[10px] font-semibold text-accent hover:underline cursor-pointer"
+                    className="inline-flex items-center gap-1 mt-1 text-xs font-semibold text-accent hover:underline cursor-pointer rounded focus-ring"
                   >
                     <Upload className="w-3 h-3" />
                     <span>Import JSON Blueprints</span>
@@ -437,13 +490,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         title={item.userQuery}
                       >
                         <div className="flex items-start justify-between gap-1.5 mb-1">
-                          <span className="text-xs font-semibold text-text-primary group-hover:text-accent transition-colors line-clamp-2 leading-tight">
-                            {item.userQuery}
-                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectHistoryQuery(item.userQuery);
+                            }}
+                            title={item.userQuery}
+                            className="text-left p-0 m-0 bg-transparent border-0 cursor-pointer flex-1 min-w-0 focus-ring"
+                          >
+                            <span className="text-xs font-semibold text-text-primary group-hover:text-accent transition-colors line-clamp-2 leading-tight">
+                              {item.userQuery}
+                            </span>
+                          </button>
                         </div>
 
                         {/* Metadata Tags & Row */}
-                        <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
+                        <div className="flex items-center gap-1.5 flex-wrap text-meta">
                           {isCurrentTable ? (
                             <span className="px-1.5 py-0.2 rounded-md bg-badge-success-bg text-badge-success-fg border border-badge-success-border font-medium">
                               Active Table
@@ -461,21 +524,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           )}
                         </div>
 
-                        {/* Action buttons on hover */}
-                        <div className="absolute right-2 top-2 hidden group-hover:flex items-center gap-1 bg-surface-elevated/95 p-1 rounded-lg border border-border-strong shadow-xs">
+                        {/* Revealed on hover and on card focus. Not display:none: an
+                            unrendered element cannot take focus, so focus-within could never reveal it. */}
+                        <div className="absolute right-2 top-2 flex items-center gap-1 bg-surface-elevated/95 p-1 rounded-lg border border-border-strong shadow-xs opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto pointer-coarse:opacity-100 pointer-coarse:pointer-events-auto">
                           <button
                             type="button"
                             onClick={(e) => handleCopySql(e, item)}
-                            className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface-secondary transition-colors"
+                            className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-surface-secondary transition-colors focus-ring"
                             title="Copy SQL"
+                            aria-label="Copy SQL"
                           >
                             {isCopied ? <Check className="w-3 h-3 text-success" /> : <Copy className="w-3 h-3" />}
                           </button>
                           <button
                             type="button"
                             onClick={(e) => handleDeleteSavedQuery(e, item)}
-                            className="p-1 rounded text-text-muted hover:text-error hover:bg-badge-error-bg transition-colors"
+                            className="p-1.5 rounded text-text-muted hover:text-error hover:bg-badge-error-bg transition-colors focus-ring"
                             title="Remove from memory"
+                            aria-label="Remove from memory"
                           >
                             <Trash2 className="w-3 h-3" />
                           </button>
@@ -492,12 +558,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {activeTab === 'history' && (
             <div>
               <div className="flex items-center justify-between mb-2 px-1">
-                <span className="text-[10px] text-text-muted font-medium">Session History</span>
+                <span className="text-meta text-text-muted font-medium">Session History</span>
                 {history.length > 0 && (
                   <button
                     type="button"
                     onClick={onClearHistory}
-                    className="text-[10px] text-text-muted hover:text-error transition-colors duration-fast focus-visible:outline-none cursor-pointer"
+                    className="text-meta text-text-muted hover:text-error transition-colors duration-fast focus-ring cursor-pointer"
                     title="Clear session history"
                   >
                     Clear History
@@ -506,7 +572,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
 
               {history.length === 0 ? (
-                <p className="text-[11px] text-text-muted italic px-1 py-3 text-center">
+                <p className="text-meta text-text-muted italic px-1 py-3 text-center">
                   No queries run in this session.
                 </p>
               ) : (
@@ -515,11 +581,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <button
                       key={item.id}
                       onClick={() => onSelectHistoryQuery(item.question)}
-                      className="btn-interactive w-full text-left px-2.5 py-1.5 rounded-lg text-xs transition-colors duration-fast truncate block hover:bg-surface-secondary text-text-secondary hover:text-text-primary focus-visible:outline-none cursor-pointer"
+                      className="btn-interactive w-full text-left px-2.5 py-1.5 rounded-lg text-xs transition-colors duration-fast truncate block hover:bg-surface-secondary text-text-secondary hover:text-text-primary focus-ring cursor-pointer"
                       title={item.question}
                     >
                       <span className="truncate block font-medium">{item.question}</span>
-                      <span className="text-[10px] text-text-muted font-mono">
+                      <span className="text-meta text-text-muted font-mono">
                         {item.rowCount} rows · {item.timestamp}
                       </span>
                     </button>
@@ -541,10 +607,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       >
         <div className="flex items-center gap-2 font-medium mb-1" style={{ color: 'var(--success)' }}>
           <ShieldCheck className="w-3.5 h-3.5 flex-shrink-0" />
-          <span className="font-semibold text-[11px] tracking-wide">Local Engine Active</span>
+          <span className="font-semibold text-meta">Local Engine Active</span>
         </div>
-        <p className="text-[11px] text-text-muted leading-relaxed">
-          Zero telemetry · In-memory DuckDB
+        <p className="text-meta text-text-muted leading-relaxed">
+          No app-operated telemetry · runs in this tab
         </p>
       </div>
     </div>
@@ -564,10 +630,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {isOpenMobile && (
         <div className="lg:hidden fixed inset-0 z-50 flex">
           <div
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm animate-in fade-in duration-standard"
+            className="fixed inset-0 bg-scrim backdrop-blur-sm animate-in fade-in duration-standard"
+            aria-hidden="true"
             onClick={onCloseMobile}
           />
           <aside
+            ref={drawerRef}
+            id="mobile-navigation-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Datasets, schema and query memory"
+            tabIndex={-1}
             className="relative w-80 max-w-[85vw] h-full shadow-2xl flex flex-col z-10 transition-colors duration-fast"
             style={{ background: 'var(--surface)', borderRight: '1px solid var(--border)' }}
           >

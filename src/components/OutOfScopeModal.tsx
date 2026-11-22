@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { Dataset, OutOfScopeData } from '../types';
+import { useDialogA11y } from '../hooks/useDialogA11y';
 import {
   Compass,
   AlertTriangle,
@@ -26,6 +27,9 @@ export const OutOfScopeModal: React.FC<OutOfScopeModalProps> = ({
   onSelectSuggestion,
   isDarkMode,
 }) => {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogA11y({ isOpen: isOpen && Boolean(data), containerRef: dialogRef, onClose });
+
   if (!isOpen || !data) return null;
 
   const handleSuggestionClick = (q: string) => {
@@ -34,8 +38,15 @@ export const OutOfScopeModal: React.FC<OutOfScopeModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in duration-standard">
-      <div className="relative w-full max-w-xl rounded-2xl border shadow-2xl p-6 bg-surface text-text-primary border-border-subtle overflow-hidden space-y-5">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-scrim backdrop-blur-xs animate-in fade-in duration-standard">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="out-of-scope-title"
+        tabIndex={-1}
+        className="relative w-full max-w-xl rounded-2xl border shadow-2xl p-6 bg-surface text-text-primary border-border-subtle overflow-hidden space-y-5"
+      >
         {/* Top Header */}
         <div className="flex items-start justify-between pb-3 border-b border-border-subtle">
           <div className="flex items-center gap-3">
@@ -44,21 +55,23 @@ export const OutOfScopeModal: React.FC<OutOfScopeModalProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-base font-semibold text-text-primary">
+                <h3 id="out-of-scope-title" className="text-heading font-semibold text-text-primary">
                   Question Out of Scope
                 </h3>
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-badge-warning-bg text-badge-warning-fg border border-badge-warning-border">
+                <span className="text-meta font-semibold px-2 py-0.5 rounded-full bg-badge-warning-bg text-badge-warning-fg border border-badge-warning-border">
                   Out of Bounds
                 </span>
               </div>
-              <p className="text-xs text-text-secondary mt-0.5">
+              <p className="text-prose text-text-secondary mt-0.5">
                 This question cannot be answered using the loaded dataset.
               </p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-secondary transition-colors duration-fast"
+            aria-label="Close"
+            className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-secondary transition-colors duration-fast focus-ring"
             title="Close"
           >
             <X className="w-5 h-5" />
@@ -67,20 +80,20 @@ export const OutOfScopeModal: React.FC<OutOfScopeModalProps> = ({
 
         {/* User's Original Query Box */}
         <div className="p-3.5 rounded-xl border border-border-subtle bg-surface-secondary/70">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted block mb-1">
+          <span className="text-meta font-semibold uppercase text-text-muted block mb-1">
             Your Question
           </span>
-          <p className="text-xs sm:text-sm font-medium text-text-primary italic">
+          <p className="text-prose font-medium text-text-primary italic">
             "{data.question}"
           </p>
         </div>
 
         {/* Explanation Alert Card */}
-        <div className="p-3.5 rounded-xl border border-badge-warning-border bg-badge-warning-bg text-badge-warning-fg text-xs flex items-start gap-2.5 shadow-2xs">
+        <div className="p-3.5 rounded-xl border border-badge-warning-border bg-badge-warning-bg text-badge-warning-fg text-prose flex items-start gap-2.5 shadow-2xs">
           <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />
           <div className="space-y-1">
             <span className="font-semibold block text-text-primary">Why this cannot be analyzed:</span>
-            <p className="text-text-secondary leading-relaxed">
+            <p className="text-text-secondary">
               {data.reason}
             </p>
           </div>
@@ -94,17 +107,22 @@ export const OutOfScopeModal: React.FC<OutOfScopeModalProps> = ({
                 <Database className="w-3.5 h-3.5 text-accent" />
                 Active Dataset: <strong className="text-text-primary">{dataset.name}</strong>
               </span>
-              <span className="text-[11px] text-text-muted font-mono">
+              <span className="text-meta text-text-muted font-mono">
                 {dataset.rowCount.toLocaleString()} rows · {dataset.columns.length} columns
               </span>
             </div>
 
             {/* Column pills */}
-            <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto p-2 rounded-lg bg-surface-secondary/50 border border-border-subtle">
+            <div
+              role="group"
+              aria-label="Dataset columns"
+              tabIndex={0}
+              className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto p-2 rounded-lg bg-surface-secondary/50 border border-border-subtle focus-ring"
+            >
               {dataset.columns.map((col) => (
                 <span
                   key={col.name}
-                  className="text-[11px] font-mono px-2 py-0.5 rounded bg-surface border border-border-strong text-text-secondary"
+                  className="text-meta font-mono px-2 py-0.5 rounded bg-surface border border-border-strong text-text-secondary"
                 >
                   {col.name}
                 </span>
@@ -116,7 +134,7 @@ export const OutOfScopeModal: React.FC<OutOfScopeModalProps> = ({
         {/* Suggested in-scope questions */}
         {data.suggestedQuestions && data.suggestedQuestions.length > 0 && (
           <div className="space-y-2">
-            <span className="text-[11px] font-semibold text-text-secondary flex items-center gap-1.5">
+            <span className="text-meta font-semibold text-text-secondary flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-accent" />
               Try one of these relevant questions instead:
             </span>
@@ -124,8 +142,9 @@ export const OutOfScopeModal: React.FC<OutOfScopeModalProps> = ({
               {data.suggestedQuestions.map((sug, idx) => (
                 <button
                   key={idx}
+                  type="button"
                   onClick={() => handleSuggestionClick(sug)}
-                  className="btn-interactive w-full p-2.5 rounded-lg border text-left text-xs flex items-center justify-between group bg-surface border-border-subtle text-text-secondary hover:border-accent hover:text-text-primary hover:bg-surface-secondary shadow-2xs"
+                  className="btn-interactive w-full p-2.5 rounded-lg border text-left text-xs flex items-center justify-between group bg-surface border-border-subtle text-text-secondary hover:border-accent hover:text-text-primary hover:bg-surface-secondary shadow-2xs focus-ring"
                 >
                   <span className="truncate pr-2 font-medium">{sug}</span>
                   <ArrowRight className="w-3.5 h-3.5 opacity-40 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all duration-fast text-accent flex-shrink-0" />
@@ -140,7 +159,7 @@ export const OutOfScopeModal: React.FC<OutOfScopeModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="btn-interactive px-4 py-1.5 text-xs font-semibold rounded-lg bg-accent hover:bg-accent-hover text-white shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            className="btn-interactive px-4 py-1.5 text-xs font-semibold rounded-lg bg-accent hover:bg-accent-hover text-accent-ink shadow-xs focus-ring"
           >
             Got It · Edit Query
           </button>

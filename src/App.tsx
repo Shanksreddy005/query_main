@@ -9,23 +9,25 @@ import { Dataset, QueryResult, ApiKeyConfig, HistoryItem, ReasoningStep, OutOfSc
 import { PREBUILT_DATASETS } from './services/sampleData';
 import { registerDatasetInSql, executeValidatedSql, cancelCurrentQuery } from './services/sqlEngine';
 import { processNaturalLanguageQuery, generateDatasetSuggestions, cancelActiveQueryProcessing } from './services/aiService';
+import { CANCELLED_RUN_NOTICE, isUserCancellation } from './services/queryLifecycle';
 import { DEFAULT_PROVIDER, DEFAULT_MODELS } from './services/modelRegistry';
 import { loadStoredApiKeyConfig, saveApiKeyConfig } from './services/keyStorage';
+import { useTheme } from './hooks/useTheme';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { QueryInputArea } from './components/QueryInputArea';
-import { ResultsView } from './components/ResultsView';
+import { ResultsView, type SqlExecutionOutcome } from './components/ResultsView';
 import { CsvUploader } from './components/CsvUploader';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { OnboardingModal } from './components/OnboardingModal';
 import { OutOfScopeModal } from './components/OutOfScopeModal';
 import { TelemetryAuditorModal } from './components/TelemetryAuditorModal';
-import { ShieldCheck, Upload, Database, AlertCircle, FileSpreadsheet, X } from 'lucide-react';
+import { ShieldCheck, Upload, Database, AlertCircle, AlertTriangle, Info, FileSpreadsheet, X } from 'lucide-react';
 
 export default function App() {
   const queryRequestIdRef = useRef<number>(0);
-  // Theme state
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
+  const { preference: themePreference, resolved: themeResolved, cyclePreference } = useTheme();
+  const isDarkMode = themeResolved === 'dark';
 
   // Dataset state (default to preloaded SaaS dataset for instant playground)
   const [activeDataset, setActiveDataset] = useState<Dataset | null>(PREBUILT_DATASETS.saas.dataset);
@@ -53,6 +55,9 @@ export default function App() {
   const [currentResult, setCurrentResult] = useState<QueryResult | null>(null);
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [datasetNotice, setDatasetNotice] = useState<string | null>(null);
+  // A cancelled or abandoned run leaves the workspace unchanged, so nothing on screen says the
+  // click had any effect. This carries the one fact the user needs: the run stopped.
+  const [runNotice, setRunNotice] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
 
   // Out of scope modal state
@@ -74,17 +79,6 @@ export default function App() {
     }
   }, [activeDataset]);
 
-  // Apply dark mode class to HTML element
-  useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-      document.body.style.backgroundColor = 'var(--background)';
-    } else {
-      document.documentElement.classList.remove('dark');
-      document.body.style.backgroundColor = 'var(--background)';
-    }
-  }, [isDarkMode]);
-
   // Handle switching datasets
   const handleSelectDataset = (dataset: Dataset, notice?: string) => {
     setActiveDataset(dataset);
@@ -94,6 +88,7 @@ export default function App() {
     setQuery('');
     setCurrentResult(null);
     setExecutionError(null);
+    setRunNotice(null);
     setDatasetNotice(notice || null);
     setIsUploaderOpen(false);
     setIsOpenMobileSidebar(false);
@@ -107,6 +102,7 @@ export default function App() {
     const currentRequestId = ++queryRequestIdRef.current;
     setIsRunning(true);
     setExecutionError(null);
+    setRunNotice(null);
     setCurrentStep({ title: 'Semantic Grounding', detail: 'Analyzing question and schema...', status: 'running' });
 
     try {
@@ -198,9 +194,16 @@ export default function App() {
       ]);
     } catch (err: any) {
       if (currentRequestId !== queryRequestIdRef.current) return;
-      console.error('Query execution error:', err);
-      setExecutionError(err?.message || 'An unexpected error occurred while executing the query.');
-      setCurrentResult(null);
+      const message = err?.message || 'An unexpected error occurred while executing the query.';
+      // A request the user stopped is not a failure, and a red alert about it teaches the wrong
+      // lesson. The previous verified result stays on screen because it still answers its own
+      // question, which the results header repeats.
+      if (isUserCancellation(message)) {
+        setRunNotice(CANCELLED_RUN_NOTICE);
+      } else {
+        console.error('Query execution error:', err);
+        setExecutionError(message);
+      }
     } finally {
       if (currentRequestId === queryRequestIdRef.current) {
         setIsRunning(false);
@@ -217,17 +220,28 @@ export default function App() {
     cancelCurrentQuery().catch(() => {});
     setIsRunning(false);
     setCurrentStep(null);
+    setRunNotice(CANCELLED_RUN_NOTICE);
   };
 
-  // Re-run modified SQL query
-  const handleUpdateSql = async (newSql: string) => {
-    if (!activeDataset || !currentResult?.queryPlan) return;
+  // Re-run modified SQL. The caller needs the outcome, because a resolved promise is not evidence
+  // that a new result exists.
+  const handleUpdateSql = async (newSql: string): Promise<SqlExecutionOutcome> => {
+    if (isRunning) {
+      setRunNotice('A query is still running. Stop it before re-executing edited SQL.');
+      return 'blocked';
+    }
+    if (!activeDataset || !currentResult?.queryPlan) {
+      setExecutionError(
+        'This result carries no verified query plan, so edited SQL cannot be validated against it. Re-run the question instead.'
+      );
+      return 'rejected';
+    }
     setExecutionError(null);
     try {
       const execResult = await executeValidatedSql(newSql, activeDataset, currentResult.queryPlan, currentResult.question);
       if (!execResult.success) {
         setExecutionError(execResult.error || 'The edited SQL could not be verified.');
-        return;
+        return 'rejected';
       }
       if (currentResult) {
         const updatedInsight = generateEvidenceBasedSummary({
@@ -257,8 +271,10 @@ export default function App() {
           insight: updatedInsight,
         });
       }
+      return 'executed';
     } catch (err: any) {
       setExecutionError(err?.message || 'The edited SQL could not be verified.');
+      return 'rejected';
     }
   };
 
@@ -298,9 +314,11 @@ export default function App() {
         onOpenUploader={() => setIsUploaderOpen(true)}
         onOpenAuditor={() => setIsAuditorOpen(true)}
         onToggleMobileSidebar={() => setIsOpenMobileSidebar(!isOpenMobileSidebar)}
+        isMobileSidebarOpen={isOpenMobileSidebar}
         apiKeyConfig={apiKeyConfig}
         isDarkMode={isDarkMode}
-        onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
+        themePreference={themePreference}
+        onCycleThemePreference={cyclePreference}
         isPresentationMode={isPresentationMode}
         onTogglePresentationMode={() => setIsPresentationMode(!isPresentationMode)}
       />
@@ -325,7 +343,10 @@ export default function App() {
         />
 
         {/* Content Workspace */}
-        <main className="flex-1 overflow-y-auto px-4 sm:px-8 py-6 max-w-5xl mx-auto w-full space-y-6">
+        <main
+          className="flex-1 overflow-y-auto px-4 sm:px-8 py-6 max-w-5xl xl:max-w-6xl mx-auto w-full space-y-6"
+          aria-busy={isRunning}
+        >
           {/* Uploader Dropdown Modal / View if triggered */}
           {isUploaderOpen && (
             <div className="p-6 rounded-2xl border mb-6 relative animate-in fade-in bg-surface border-border-subtle shadow-md">
@@ -362,12 +383,12 @@ export default function App() {
 
           {/* Dataset Import Notice — partial success must not look like a clean load */}
           {datasetNotice && (
-            <div className="p-4 rounded-xl border border-badge-warning-border bg-badge-warning-bg text-badge-warning-fg text-xs sm:text-sm flex items-start justify-between gap-3 animate-in fade-in shadow-2xs">
+            <div role="status" className="p-4 rounded-xl border border-badge-warning-border bg-badge-warning-bg text-badge-warning-fg text-prose flex items-start justify-between gap-3 animate-in fade-in shadow-2xs">
               <div className="flex items-start gap-3">
                 <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-warning" />
                 <div>
                   <span className="font-semibold block text-text-primary">Dataset Import Notice</span>
-                  <p className="mt-0.5 leading-relaxed text-text-secondary">{datasetNotice}</p>
+                  <p className="mt-0.5 text-text-secondary">{datasetNotice}</p>
                 </div>
               </div>
               <button
@@ -381,21 +402,40 @@ export default function App() {
             </div>
           )}
 
+          {/* Cancelled or superseded runs change nothing on screen, so the run has to say that
+              out loud rather than leave the click looking like it did nothing. */}
+          {runNotice && (
+            <div role="status" className="p-3.5 rounded-xl border border-badge-info-border bg-badge-info-bg text-badge-info-fg text-prose flex items-start justify-between gap-3 animate-in fade-in shadow-2xs">
+              <div className="flex items-start gap-3">
+                <Info className="w-4 h-4 flex-shrink-0 mt-0.5 text-info" />
+                <span className="text-text-secondary">{runNotice}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRunNotice(null)}
+                aria-label="Dismiss notice"
+                className="text-text-muted hover:text-text-primary flex-shrink-0 rounded focus-ring"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
           {/* Execution Error Banner */}
           {executionError && (
-            <div className="p-4 rounded-xl border border-badge-error-border bg-badge-error-bg text-badge-error-fg text-xs sm:text-sm flex items-start justify-between gap-3 animate-in fade-in shadow-2xs">
+            <div role="alert" className="p-4 rounded-xl border border-badge-error-border bg-badge-error-bg text-badge-error-fg text-prose flex items-start justify-between gap-3 animate-in fade-in shadow-2xs">
               <div className="flex items-start gap-3 text-text-primary">
                 <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-error" />
                 <div>
                   <span className="font-semibold block text-text-primary">Query Notice</span>
-                  <p className="mt-0.5 leading-relaxed text-text-secondary">{executionError}</p>
+                  <p className="mt-0.5 text-text-secondary">{executionError}</p>
                 </div>
               </div>
               {(executionError.includes('API Key') || executionError.includes('Settings') || executionError.includes('model') || executionError.includes('HTTP')) && (
                 <button
                   type="button"
                   onClick={() => setIsKeyModalOpen(true)}
-                  className="btn-interactive px-3 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-white font-medium text-xs flex-shrink-0 shadow-xs whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                  className="btn-interactive px-3 py-1.5 rounded-lg bg-accent hover:bg-accent-hover text-accent-ink font-medium text-xs flex-shrink-0 shadow-xs whitespace-nowrap focus-ring"
                 >
                   Open Settings
                 </button>

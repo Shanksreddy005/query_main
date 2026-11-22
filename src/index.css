@@ -58,16 +58,73 @@
   --color-code-fg: var(--code-fg);
   --color-code-border: var(--code-border);
 
+  /* Foundation tokens for the redesign phases. Nothing consumes them yet; they are
+     mapped into the theme namespace now so a later phase adds rules instead of
+     re-defining the palette. */
+  --color-focus: var(--focus);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-text: var(--accent-text);
+  --color-scrim: var(--scrim);
+  --color-field-border: var(--field-border);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
+
   /* Durations */
   --duration-fast: 140ms;
   --duration-standard: 200ms;
   --duration-disclosure: 200ms;
   --duration-result-enter: 300ms;
   --duration-chart-enter: 350ms;
+
+  /* Typography scale — one token per role the interface could not already express
+     consistently. Tailwind's own text-xs / text-sm / text-base tiers stay in place
+     where they already carry a role, so this adds four names instead of re-blessing
+     every size. The utilities Tailwind generates from them ship the line-height and
+     letter-spacing with the size, which is what removes the per-component drift:
+
+     | role      | size  | line height | tracking   | weight at call site |
+     | display   | 20px  | 1.20        | -0.015em   | 600 KPI value / headline |
+     | heading   | 16px  | 1.35        | -0.010em   | 600 page & dialog title |
+     | component | 14px  | (text-sm)   | 0          | 600 card & panel title |
+     | prose     | 13px  | 1.60        | 0          | 400 findings, explanatory copy |
+     | dense UI  | 12px  | (text-xs)   | 0          | 400-500 table cells, controls |
+     | meta      | 11px  | 1.30        | +0.040em   | 500-600 metadata, mono values, uppercase labels |
+
+     11px is the floor. The 9px, 10px, 10.5px and 11.5px values it replaces were
+     metadata — row counts, mono identifiers, field labels, badges — and stay at
+     11px only because each one is a single short line of secondary text; nothing
+     meant to be read as sentences sits below 12px. Weights are deliberately left
+     out of the tokens: a size token that also sets font-weight loses to the
+     font-* utility on the same element in unpredictable order. */
+  --text-display: 1.25rem;
+  --text-display--line-height: 1.2;
+  --text-display--letter-spacing: -0.015em;
+
+  --text-heading: 1rem;
+  --text-heading--line-height: 1.35;
+  --text-heading--letter-spacing: -0.01em;
+
+  --text-prose: 0.8125rem;
+  --text-prose--line-height: 1.6;
+
+  --text-meta: 0.6875rem;
+  --text-meta--line-height: 1.3;
+  --text-meta--letter-spacing: 0.04em;
 }
 
 @layer base {
   :root {
+    /* Native widgets — the chart dimension selects and the storage opt-in checkbox — are drawn by
+       the operating system. Without a declared scheme they keep the system appearance while the rest
+       of the page follows the app theme, so each theme scope tells the UA which one it is. */
+    color-scheme: light;
+
     --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
@@ -79,14 +136,24 @@
 
     --border: #DDD8CF;
     --border-strong: #C9C2B6;
+    /* Boundary of an empty form field. --border/--border-strong are dividers, tuned for
+       subtlety (1.3-1.7:1); WCAG 1.4.11 needs the editable area itself to be perceivable
+       at 3:1, and no existing token reaches it without making every divider heavier.
+       Measured: 3.84 / 3.74 / 3.46 / 3.17 against the four light surfaces. */
+    --field-border: #8A8174;
 
     --text-primary: #1C1917;
     --text-secondary: #44403C;
-    --text-muted: #78716C;
+    /* Measured against the four light surfaces: 5.57 / 5.43 / 5.02 / 4.60. The previous
+       #78716C fell to 3.96 on --surface-secondary, below the 4.5:1 the audit flagged. */
+    --text-muted: #6E6760;
 
     /* Warm amber-orange accent instead of flat violet */
     --accent: #D97706;
-    --accent-hover: #B45309;
+    /* The primary CTA keeps this amber fill and carries --accent-ink, so hover has to
+       lighten rather than darken: ink on #B45309 is 2.60:1, ink here is 6.04:1.
+       Same direction as the dark theme (#F59E0B -> #FBBF24). */
+    --accent-hover: #DE810A;
 
     --success: #047857;
     --warning: #B45309;
@@ -128,9 +195,54 @@
 
     --ease-out-smooth: cubic-bezier(0.16, 1, 0.3, 1);
     --ease-in-out-restrained: cubic-bezier(0.4, 0, 0.2, 1);
+
+    /* Focus indicator colour — 3:1 minimum against the surfaces it sits on */
+    --focus: #B45309;
+
+    /* Text placed on an accent fill. Dark ink clears AA on amber in both themes,
+       white does not, so this is deliberately theme-independent. */
+    --accent-ink: #1C1917;
+
+    /* Accent used as text or a rule, where the fill value is too light. Darkened from
+       #B45309 because that value is 4.15:1 on --surface-secondary, the chip background
+       accent-coloured labels sit on. Now 5.78 / 5.64 / 5.22 / 4.78. */
+    --accent-text: #A64B08;
+
+    /* One overlay scrim value, so dimming stops being re-invented per dialog */
+    --scrim: rgba(0, 0, 0, 0.62);
+
+    /* Categorical chart ramp (light) — mirrors the palette the chart layer uses today */
+    --chart-1: #D97706;
+    --chart-2: #0284C7;
+    --chart-3: #059669;
+    --chart-4: #7C3AED;
+    --chart-5: #E11D48;
+    --chart-6: #EA580C;
+    --chart-7: #4F46E5;
+    --chart-8: #475569;
+
+    /* Spacing and radius scales. Deliberately outside any Tailwind namespace: binding
+       these into @theme would re-map existing utilities and change how components
+       already render, which is not what this foundation step is for. */
+    --ui-space-2: 2px;
+    --ui-space-4: 4px;
+    --ui-space-8: 8px;
+    --ui-space-12: 12px;
+    --ui-space-16: 16px;
+    --ui-space-24: 24px;
+    --ui-space-32: 32px;
+    --ui-space-48: 48px;
+    --ui-space-64: 64px;
+
+    --ui-radius-4: 4px;
+    --ui-radius-8: 8px;
+    --ui-radius-12: 12px;
+    --ui-radius-pill: 9999px;
   }
 
   .dark {
+    color-scheme: dark;
+
     /* Deep charcoal base — not pure black, has warmth */
     --background: #0E0C0A;
     --surface: #161412;
@@ -139,6 +251,8 @@
 
     --border: #2E2A26;
     --border-strong: #3D3830;
+    /* 3.12 / 3.57 / 3.80 / 3.33 against the four dark surfaces — see the light token. */
+    --field-border: #736D60;
 
     --text-primary: #FAF9F7;
     --text-secondary: #D6D0C8;
@@ -178,6 +292,19 @@
     --code-bg: #080706;
     --code-fg: #E2E8F0;
     --code-border: #2E2A26;
+
+    --focus: #FBBF24;
+    --accent-text: #FBBF24;
+
+    /* Categorical chart ramp (dark) — brighter stops for the charcoal base */
+    --chart-1: #F59E0B;
+    --chart-2: #38BDF8;
+    --chart-3: #34D399;
+    --chart-4: #A78BFA;
+    --chart-5: #FB7185;
+    --chart-6: #FB923C;
+    --chart-7: #818CF8;
+    --chart-8: #94A3B8;
   }
 
   body {
@@ -190,6 +317,49 @@
 
   code, pre, kbd {
     font-family: var(--font-mono);
+  }
+}
+
+/* The duration tokens above were declared but never bound to a utility, so the
+   duration-* classes in the JSX fell through to Tailwind's default 150ms. These
+   bindings follow the same shape as the built-in numeric duration utilities —
+   --tw-duration plus an explicit declaration — so they compose with transition-*
+   exactly the way a numeric duration does. */
+@utility duration-fast {
+  --tw-duration: var(--duration-fast);
+  transition-duration: var(--duration-fast);
+}
+
+@utility duration-standard {
+  --tw-duration: var(--duration-standard);
+  transition-duration: var(--duration-standard);
+}
+
+/* One keyboard-focus indicator for the whole app. It self-scopes to :focus-visible
+   so pointer interaction stays quiet, and it is drawn as an outline ring outside the
+   component rather than as a border or tint change, so focus reads as a shape change
+   and not only as a colour change. --focus is 3:1 against the surfaces it sits on in
+   both themes. */
+@utility focus-ring {
+  &:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+}
+
+/* `text-accent` paints the fill accent as ink: 3.11:1 on the light card and 2.87:1 on
+   the light page, under AA for the labels, bullets and link text it carries. Rather
+   than add a second class at every one of the ~70 call sites, the accent-as-text role
+   resolves to --accent-text here — the token Phase 0 already defined for this case.
+   Icons drawn with currentColor get it too and only need 3:1, which 4.78:1 clears.
+   Tailwind emits its generated utilities at the @import above, so these same-layer,
+   same-specificity rules win on source order. The fill and border uses of --accent
+   (bg-accent, border-accent) are untouched. */
+@layer utilities {
+  .text-accent,
+  .hover\:text-accent:hover,
+  .group:hover .group-hover\:text-accent {
+    color: var(--accent-text);
   }
 }
 
@@ -233,11 +403,16 @@
   opacity: 0.6;
 }
 
-/* Section divider — a subtle horizontal rule with label */
+/* Section divider — the uppercase rail/eyebrow role. It took 10px / 700 / 0.08em from
+   a bespoke rule while every other component invented its own micro-label; it now
+   reads the --text-meta size and tracking, and 600 rather than 700 so an eyebrow never
+   outweighs the 14px card title above its content. Unlayered, like the classes around
+   it, so it still wins over a stray text-* utility on the same element. */
 .section-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-size: var(--text-meta);
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: var(--text-meta--letter-spacing);
   text-transform: uppercase;
   color: var(--text-muted);
 }
@@ -245,7 +420,10 @@
 /* Gradient accent button */
 .btn-accent-gradient {
   background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
-  color: #fff;
+  /* White on this amber measured 3.19:1 (light) and 2.15:1 (dark) — below AA for the
+     12-14px labels these buttons carry. Dark ink on amber is the compliant pairing:
+     5.49:1 light worst stop, 8.14:1 dark, and 4.85 / 7.03 while the hover fade is active. */
+  color: var(--accent-ink);
   border: none;
   border-radius: 10px;
   font-weight: 600;
@@ -261,11 +439,16 @@
   transform: translateY(0);
   opacity: 1;
 }
+/* Fading the whole element to 45% left the label at 1.76:1 (light) / 2.61:1 (dark).
+   A neutral filled button instead: the grey fill plus the dropped shadow and border
+   still read as disabled, and the label stays legible at 4.60 / 5.73. */
 .btn-accent-gradient:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  transform: none;
+  background: var(--surface-secondary);
+  color: var(--text-muted);
   box-shadow: none;
+  transform: none;
+  opacity: 1;
+  cursor: not-allowed;
 }
 
 /* Motion Design System */
@@ -351,6 +534,25 @@
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
-    transform: none !important;
+  }
+
+  /* The previous rule also carried `transform: none !important` on every element.
+     That is not a motion switch — Tailwind v4 emits its translate/rotate/scale
+     utilities on the `translate`/`rotate`/`scale` properties, so the blanket kill
+     missed the hover nudges it was aimed at while cancelling any genuine
+     `transform` declaration app-wide, including the QueryInputArea submit icon's
+     deliberate `transform: 'none'`. Motion is now disabled where it actually
+     lives: the authored hover lifts and the two translate/scale nudges. The
+     result/chart enter animations are already neutralised by the duration and
+     iteration overrides above. */
+  .btn-interactive:hover:not(:disabled),
+  .btn-accent-gradient:hover:not(:disabled) {
+    transform: none;
+  }
+  .group:hover .group-hover\:translate-x-0\.5 {
+    translate: none;
+  }
+  .group:hover .group-hover\:scale-105 {
+    scale: none;
   }
 }

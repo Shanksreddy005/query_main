@@ -58,7 +58,7 @@ function buildPromptSystem(schema: SemanticSchema): string {
   });
   const blueprintsText = getBlueprintPromptSection();
 
-  return `You are QueryMind, an elite deterministic AI data analyst and SQL architect running in a 100% browser-native environment.
+  return `You are QueryMind, an elite deterministic AI data analyst and SQL architect. Generated SQL executes locally in the user's browser on DuckDB-WASM.
 Your goal is to parse the user's natural language question, produce a formal intermediate Query Plan, and generate accurate DuckDB-WASM SQL.
 
 ${schemaText}
