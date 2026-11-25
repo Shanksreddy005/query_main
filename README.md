@@ -2,7 +2,7 @@
 
 Browser-native natural-language analytics: upload a CSV, ask a question in plain English, and get validated SQL, a locally executed DuckDB-WASM result, a chart and an evidence-grounded summary — bring-your-own-key, with no backend of QueryMind's own.
 
-**Release status:** v1.2 — deployed and live-verified on `https://querymind.in` (2026-11-19; that deployed tree ran 349 tests / 91 suites). The current working tree runs 435 tests / 111 suites with a byte-for-byte reproducible build. Real-provider verification on Google Gemini and Groq was completed in the earlier release passes, and the live browser verification of the deployed bundle, the R2 engine binaries, keyless demo behaviour and the ranked-summary fix is recorded in [docs/verification/v1.2-live-production-verification.md](docs/verification/v1.2-live-production-verification.md).
+**Release status:** v1.2 — deployed and live-verified on `https://querymind.in` (2026-11-19; that deployed tree ran 349 tests / 91 suites). The current working tree runs 467 tests / 118 suites with a byte-for-byte reproducible build. Real-provider verification on Google Gemini and Groq was completed in the earlier release passes, and the live browser verification of the deployed bundle, the R2 engine binaries, keyless demo behaviour and the ranked-summary fix is recorded in [docs/verification/v1.2-live-production-verification.md](docs/verification/v1.2-live-production-verification.md). The working tree also carries a public landing page, privacy policy and contact page; that tree has not been deployed.
 
 ## How it works
 
@@ -13,22 +13,26 @@ The LLM is a semantic planner only. Every plan must pass a deterministic validat
 ```bash
 npm ci            # clean install
 npm run dev       # dev server on http://localhost:3000
-npm test          # 435 tests / 111 suites
+npm test          # 467 tests / 118 suites
 npm run build     # production build → dist/
 npm run preview   # serve dist/ at http://127.0.0.1:4173
 ```
+
+Public routes: `/` landing page, `/privacy` policy, `/contact`; the analytics workspace is at `/app`.
 
 **Provider key (BYOK):** open Settings (gear icon) → pick Gemini / Groq / OpenAI → paste your key → **Test Key** → **Save Configuration**. Keys live in tab memory unless you opt in to "Remember API key". `.env.example` contains placeholder-only variables; never commit real keys. Bundled verified sample queries work without a key — on the deployed v1.2 build they are answered locally, with no provider request made.
 
 ## Repository layout
 
 ```
-├── src/            Application code (components, services, config)
-├── public/         First-party assets: DuckDB-WASM worker scripts and engine binaries, fonts
+├── src/            Application code (components, services, config, public pages)
+├── public/         First-party assets: DuckDB-WASM worker scripts and engine binaries, fonts,
+│                   robots.txt and sitemap.xml
 │                   (in production the two oversized .wasm binaries are served from the
 │                   operator's R2 domain rather than uploaded to Pages)
-├── tests/          19 test files — the deterministic contract, provider transport,
-│                   memory cleanup, summary correctness, security regressions
+├── tests/          20 test files — the deterministic contract, provider transport,
+│                   memory cleanup, summary correctness, security regressions, public-site
+│                   routing and disclosure contracts
 ├── docs/           Engineering documentation
 │   ├── ARCHITECTURE.md     Pipeline and module map
 │   ├── SECURITY.md         Security architecture and SQL sandboxing

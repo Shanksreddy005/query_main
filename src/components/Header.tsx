@@ -69,7 +69,7 @@ export const Header: React.FC<HeaderProps> = ({
           <Menu className="w-4 h-4" />
         </button>
 
-        <a href="#" aria-label="QueryMind home" className="flex items-center gap-2 group focus-ring rounded-lg py-1 px-1.5 -ml-1.5 transition-colors duration-fast min-w-0">
+        <a href="/" aria-label="QueryMind home" title="QueryMind landing page" className="flex items-center gap-2 group focus-ring rounded-lg py-1 px-1.5 -ml-1.5 transition-colors duration-fast min-w-0">
           <QueryMindLogo
             size={26}
             isDarkMode={isDarkMode}

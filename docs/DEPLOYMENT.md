@@ -1,13 +1,13 @@
 # QueryMind — Deployment Guide
 
-QueryMind is a pure static application after build: no server, no database, no cookies, no client-side routing (so no rewrite rules are needed).
+QueryMind is a pure static application after build: no server, no database, no cookies. Public routes (`/`, `/privacy`, `/contact`) and the workspace at `/app` are resolved from the pathname and rely on the existing SPA fallback that the current host already applies, so no rewrite rules are added. A missing path renders a not-found page from the same document, which a static host returns with HTTP 200.
 
 ## Production build
 
 ```bash
 npm ci
 npx tsc --noEmit   # must be silent
-npm test           # 435 tests must pass
+npm test           # 467 tests must pass
 npm run build      # emits dist/
 npm run preview    # serves dist/ at http://127.0.0.1:4173 for local checks
 ```

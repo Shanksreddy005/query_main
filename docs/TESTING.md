@@ -11,6 +11,8 @@ npm run build     # production build (must succeed with tests green)
 
 **Verified working-tree status (2026-11-22):** 435 tests / 111 suites / 19 test files / 0 fail; type check clean; production build succeeds. The earlier v1.0 release sign-off recorded 301 tests / 83 suites on 2026-11-17 — a historical measurement preserved in [verification/release-sign-off.md](verification/release-sign-off.md).
 
+**Landing-page pass (2026-11-25):** 467 tests / 118 suites / 20 test files / 0 fail; type check clean; two consecutive production builds byte-identical. This tree adds the public landing, privacy and contact pages and has not been deployed.
+
 ## Test inventory (`tests/`)
 
 | File | Covers |
@@ -25,6 +27,7 @@ npm run build     # production build (must succeed with tests green)
 | `executive_summary.test.ts` | Executive-summary correctness (shares, trends, limitations wording). |
 | `prod_browser_test.mjs` | Production build browser smoke test (manual). |
 | `product_quality_regression.test.ts` | Product quality regressions. |
+| `public_site.test.ts` | Public routes, landing copy, privacy/contact disclosure, metadata and public-site accessibility contracts. |
 | `provider_transport.test.ts` | Provider transport: retry/backoff, 429/503/401 handling, timeout (90 s deadline), cancellation. |
 | `release_candidate_security.test.ts` | Security regressions: SQL sandbox, egress sanitization, key handling. |
 | `release_verification_fixes.test.ts` | Regression tests for every defect fixed during release verification (currency/alias mapping, per-group prose, share gating, lifecycle caveats). |
