@@ -11,7 +11,9 @@ npm run build     # production build (must succeed with tests green)
 
 **Verified working-tree status (2026-11-22):** 435 tests / 111 suites / 19 test files / 0 fail; type check clean; production build succeeds. The earlier v1.0 release sign-off recorded 301 tests / 83 suites on 2026-11-17 — a historical measurement preserved in [verification/release-sign-off.md](verification/release-sign-off.md).
 
-**Public-site pass (2026-11-25):** 467 tests / 118 suites / 20 test files / 0 fail; type check clean; two consecutive production builds byte-identical. The landing, privacy and contact pages were deployed the same day (query_prod `aa0a7e6`). The working tree then replaced the public header's three-state theme cycle with two explicit light/dark buttons; the suite count is unchanged.
+**Public-site pass (2026-11-25):** 467 tests / 118 suites / 20 test files / 0 fail; type check clean; two consecutive production builds byte-identical. The landing, privacy and contact pages were deployed the same day (query_prod `aa0a7e6`). The working tree then replaced the public header's three-state theme cycle with two explicit light/dark buttons; the suite count was unchanged.
+
+**SEO pass (2026-11-25, not deployed):** 481 tests / 122 suites / 21 test files / 0 fail; type check clean; two consecutive builds byte-identical, including the pre-rendered `index.html`, `privacy.html`, `contact.html`, `app.html` and `404.html`. The added suite pins the metadata module, canonical/sitemap agreement, the committed 1200 × 630 social card and the pre-render wiring. The build now runs `vite build && tsx scripts/prerender.tsx`.
 
 ## Test inventory (`tests/`)
 
@@ -33,6 +35,7 @@ npm run build     # production build (must succeed with tests green)
 | `release_verification_fixes.test.ts` | Regression tests for every defect fixed during release verification (currency/alias mapping, per-group prose, share gating, lifecycle caveats). |
 | `remediation_contract.test.ts` | The remediation contract phases (curated-answer elimination, unified validation contract, fallback labelling). |
 | `seeding_integrity.test.ts` | Starter-template and fixture seeding integrity. |
+| `seo_metadata.test.ts` | Route metadata source, canonical/sitemap agreement, social card, robots/noindex boundaries and the build-time pre-render step. |
 
 ## Regression policy
 

@@ -1,9 +1,6 @@
 import React from 'react';
 import { usePageMeta } from '../hooks/usePageMeta';
-
-const TITLE = 'Privacy Policy — QueryMind';
-const DESCRIPTION =
-  'How QueryMind handles datasets, AI-provider requests, API keys, browser storage, exports and hosting infrastructure.';
+import { PRIVACY_META } from '../services/siteMeta';
 
 const body = 'mt-3 text-sm leading-7 text-text-secondary';
 const heading = 'mt-10 text-heading font-semibold text-text-primary';
@@ -11,7 +8,7 @@ const list = 'mt-3 list-disc space-y-2 pl-5 text-sm leading-7 text-text-secondar
 const code = 'rounded bg-surface-secondary px-1 py-0.5 font-mono text-[0.8em] text-text-primary';
 
 export const PrivacyPage: React.FC = () => {
-  usePageMeta(TITLE, DESCRIPTION);
+  usePageMeta(PRIVACY_META);
 
   return (
     <article className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 sm:py-16">

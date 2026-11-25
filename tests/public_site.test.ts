@@ -278,15 +278,19 @@ describe('Contact page — verified public channels', () => {
 
 describe('Metadata, indexing and dependencies', () => {
   it('publishes the reviewed title and description', () => {
-    assert.ok(html.includes('<title>QueryMind — Conversational Data Analytics</title>'));
+    assert.ok(html.includes('<title>QueryMind | Browser-Based Natural Language to SQL</title>'));
     assert.ok(
       html.includes(
-        'Explore datasets using natural-language questions, inspect analytical results and execute SQL locally in your browser with DuckDB-WASM.'
+        'Ask questions about your data in plain English. QueryMind turns natural language into SQL and runs the analysis locally in your browser with DuckDB-WASM.'
       )
     );
     assert.match(html, /<meta name="robots" content="index,follow" \/>/);
-    assert.ok(!/og:image/.test(html), 'no social image is claimed before one exists');
-    assert.match(html, /<meta name="twitter:card" content="summary" \/>/);
+    assert.match(html, /<link rel="canonical" href="https:\/\/querymind\.in\/" \/>/);
+    assert.match(
+      html,
+      /<meta property="og:image" content="https:\/\/querymind\.in\/og\/querymind-social-preview\.png" \/>/
+    );
+    assert.match(html, /<meta name="twitter:card" content="summary_large_image" \/>/);
   });
 
   it('keeps the workspace out of the index and lists only public pages', () => {

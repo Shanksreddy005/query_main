@@ -8,10 +8,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { usePageMeta } from '../hooks/usePageMeta';
-
-const HERO_TITLE = 'QueryMind — Conversational Data Analytics';
-const HERO_DESCRIPTION =
-  'Explore datasets using natural-language questions, inspect analytical results and execute SQL locally in your browser with DuckDB-WASM.';
+import { LANDING_META } from '../services/siteMeta';
 
 const PIPELINE = [
   ['01', 'Question', 'Your question, in plain English'],
@@ -140,7 +137,7 @@ const PipelinePanel: React.FC = () => (
 );
 
 export const LandingPage: React.FC = () => {
-  usePageMeta(HERO_TITLE, HERO_DESCRIPTION);
+  usePageMeta(LANDING_META);
 
   return (
     <>

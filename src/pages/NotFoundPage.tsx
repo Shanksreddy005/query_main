@@ -1,12 +1,10 @@
 import React from 'react';
 import { ArrowRight } from 'lucide-react';
 import { usePageMeta } from '../hooks/usePageMeta';
+import { NOT_FOUND_META } from '../services/siteMeta';
 
 export const NotFoundPage: React.FC = () => {
-  usePageMeta(
-    'Page Not Found — QueryMind',
-    'The requested page does not exist. Return to the QueryMind landing page or open the workspace.'
-  );
+  usePageMeta(NOT_FOUND_META);
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-20 sm:px-6">

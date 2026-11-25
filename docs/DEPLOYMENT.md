@@ -1,6 +1,6 @@
 # QueryMind — Deployment Guide
 
-QueryMind is a pure static application after build: no server, no database, no cookies. Public routes (`/`, `/privacy`, `/contact`) and the workspace at `/app` are resolved from the pathname and rely on the existing SPA fallback that the current host already applies, so no rewrite rules are added. A missing path renders a not-found page from the same document, which a static host returns with HTTP 200.
+QueryMind is a pure static application after build: no server, no database, no cookies. Public routes (`/`, `/privacy`, `/contact`) and the workspace at `/app` each have their own pre-rendered document; the build also emits a top-level `404.html` for every unmatched path. Cloudflare Pages serves the extension-less routes from those files and returns the custom not-found page with HTTP 404. No rewrite rules are added.
 
 ## Production build
 
@@ -27,7 +27,7 @@ Both DuckDB-WASM binaries exceed Cloudflare Pages' 25 MiB per-file limit (`duckd
 |---|---|---|
 | `duckdb/duckdb-eh.wasm` | `https://assets.querymind.in/duckdb/1.33.1-dev57.0/duckdb-eh.wasm` | `duckdb/1.33.1-dev57.0/duckdb-eh.wasm` |
 | `duckdb/duckdb-mvp.wasm` | `https://assets.querymind.in/duckdb/1.33.1-dev57.0/duckdb-mvp.wasm` | `duckdb/1.33.1-dev57.0/duckdb-mvp.wasm` |
-| everything else (`index.html`, `assets/`, `duckdb/*.worker.js`, `fonts/`) | Pages (repo root) | — |
+| everything else (`index.html`, `privacy.html`, `contact.html`, `app.html`, `404.html`, `og/`, `assets/`, `duckdb/*.worker.js`, `fonts/`) | Pages (repo root) | — |
 
 R2 object requirements:
 
@@ -45,15 +45,15 @@ Code behavior (`src/services/sqlEngine.ts`):
 
 ## Deploying
 
-Upload the **contents** of `dist/` minus the two oversized `.wasm` files (i.e. `index.html`, `assets/`, `duckdb/` worker scripts, `fonts/`) to the static host; the `.wasm` modules go to R2 as tabled above:
+Upload the **contents** of `dist/` minus the two oversized `.wasm` files (i.e. `index.html`, `privacy.html`, `contact.html`, `app.html`, `404.html`, `og/`, `assets/`, `duckdb/` worker scripts, `fonts/`) to the static host; the `.wasm` modules go to R2 as tabled above. The five HTML documents are produced by `scripts/prerender.tsx` after `vite build`; `privacy.html`, `contact.html` and `app.html` must be served as clean URLs (`/privacy`, `/contact`, `/app`). The top-level `404.html` is required for unmatched paths, and it also disables Cloudflare Pages' automatic SPA fallback, so `app.html` must be uploaded with it. See [SEO.md](SEO.md).
 
 | Host | Notes |
 |---|---|
-| Cloudflare Pages | Serve the trimmed `dist/` contents (all files ≤ 25 MiB); WASM binaries from R2 (`assets.querymind.in`). |
+| Cloudflare Pages | Serve the trimmed `dist/` contents (all files ≤ 25 MiB); clean URLs map `/privacy` → `privacy.html`, `/contact` → `contact.html`, `/app` → `app.html`; unmatched paths get `404.html` with HTTP 404; WASM binaries from R2 (`assets.querymind.in`). |
 | Netlify | Full `dist/` works as-is (no per-file size problem), or use the same Pages+R2 split. |
 | Vercel | Deploy as "Other" with output directory `dist` (full `dist/` works). |
 | GitHub Pages | Per-file limit 100 MB — the largest file (`duckdb/duckdb-mvp.wasm`, 39.4 MB) fits but uploads slowly; prefer root or custom domain (root-relative asset paths). |
-| nginx / object storage | Serve `.wasm` as `application/wasm`; `index.html` → `no-cache`; hashed `assets/*` → immutable long cache. |
+| nginx / object storage | Serve `.wasm` as `application/wasm`; `index.html` → `no-cache`; hashed `assets/*` → immutable long cache; map `/privacy`, `/contact` and `/app` to their `.html` files, and serve `404.html` with HTTP 404 for unmatched paths. |
 
 DuckDB-WASM ships both variants (`duckdb-mvp`, `duckdb-eh`); the single-threaded variant needs no special headers, while the multi-threaded one requires cross-origin isolation (`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp`). The WASM module may load cross-origin from the first-party R2 domain — it contains no code that depends on the COOP/COEP setup of the embedding page.
 
@@ -66,6 +66,7 @@ The production deployment is published as a separate repository containing **onl
 - [ ] `npx tsc --noEmit` silent, `npm test` fully passing, build succeeds.
 - [ ] Uploaded file hashes match the build (record them in the deployment README).
 - [ ] No `.env`, datasets, keys or `node_modules` uploaded.
+- [ ] `/`, `/privacy`, `/contact` and `/app` each return their own document with the correct title and robots directive; `app.html` and `404.html` are present; an unknown path returns `404.html` with HTTP 404.
 - [ ] HTTPS forced; `.wasm` served as `application/wasm`.
 - [ ] Cloudflare+R2 split: R2 objects return HTTP 200 with `application/wasm`, correct `Content-Length`, and CORS headers for the deployed origin; a bundled sample query executes end-to-end on the deployed site.
 - [ ] Post-deploy: app loads with no console errors from the application's own code; the resources the application requests are first-party only (Pages origin + `assets.querymind.in` + one provider endpoint when a query runs), which is a statement about its artifacts — any script the hosting edge injects is outside that set and is checked separately; a bundled sample query returns the **Verified** badge, whose tooltip reads "Executed SQL answers this request · N integrity checks passed" and whose check count also appears separately in the answer band's facts row; an invalid key shows a clear provider error; Telemetry Auditor shows schema-metadata-only request bodies.

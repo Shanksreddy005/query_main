@@ -1,9 +1,7 @@
 import React from 'react';
 import { ArrowUpRight, KeyRound, Linkedin, Mail, ShieldAlert } from 'lucide-react';
 import { usePageMeta } from '../hooks/usePageMeta';
-
-const TITLE = 'Contact — QueryMind';
-const DESCRIPTION = 'Verified public channels for QueryMind questions, bug reports and private security reports.';
+import { CONTACT_META } from '../services/siteMeta';
 
 const REPOSITORY = 'https://github.com/Shanksreddy005/query_main';
 const EMAIL = 'shanksreddy005@gmail.com';
@@ -12,7 +10,7 @@ const LINKEDIN = 'https://www.linkedin.com/in/shashank-reddy-147227260';
 const link = 'focus-ring rounded font-medium text-accent underline underline-offset-4';
 
 export const ContactPage: React.FC = () => {
-  usePageMeta(TITLE, DESCRIPTION);
+  usePageMeta(CONTACT_META);
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6 sm:py-16">

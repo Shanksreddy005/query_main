@@ -2,7 +2,7 @@
 
 Browser-native natural-language analytics: upload a CSV, ask a question in plain English, and get validated SQL, a locally executed DuckDB-WASM result, a chart and an evidence-grounded summary — bring-your-own-key, with no backend of QueryMind's own.
 
-**Release status:** v1.2 — the public-site release (source `2b3f4fb`) was deployed to `https://querymind.in` via `query_prod` commit `aa0a7e6` on 2026-11-25 and live-verified: asset hashes, all public routes, robots/sitemap and the workspace smoke tests passed. The current working tree replaces the public header's three-state theme cycle with two explicit light/dark buttons and runs 467 tests / 118 suites with a byte-for-byte reproducible build; it is not yet deployed. Real-provider verification on Google Gemini and Groq was completed in the earlier release passes, and the live browser verification of the deployed bundle, the R2 engine binaries, keyless demo behaviour and the ranked-summary fix is recorded in [docs/verification/v1.2-live-production-verification.md](docs/verification/v1.2-live-production-verification.md).
+**Release status:** v1.2 — the public-site release (source `2b3f4fb`) was deployed to `https://querymind.in` via `query_prod` commit `aa0a7e6` on 2026-11-25 and live-verified: asset hashes, all public routes, robots/sitemap and the workspace smoke tests passed. The current working tree replaces the public header's three-state theme cycle with two explicit light/dark buttons, and adds the SEO release candidate: route metadata with canonical URLs, a committed 1200 × 630 social card, and a pre-rendered document for every route (`/`, `/privacy`, `/contact`, `/app` and a static `404.html`) at build time. It runs 481 tests / 122 suites with a byte-for-byte reproducible build; none of these changes is deployed yet. Real-provider verification on Google Gemini and Groq was completed in the earlier release passes, and the live browser verification of the deployed bundle, the R2 engine binaries, keyless demo behaviour and the ranked-summary fix is recorded in [docs/verification/v1.2-live-production-verification.md](docs/verification/v1.2-live-production-verification.md).
 
 ## How it works
 
@@ -13,8 +13,8 @@ The LLM is a semantic planner only. Every plan must pass a deterministic validat
 ```bash
 npm ci            # clean install
 npm run dev       # dev server on http://localhost:3000
-npm test          # 467 tests / 118 suites
-npm run build     # production build → dist/
+npm test          # 481 tests / 122 suites
+npm run build     # production build → dist/ (pre-renders every route, including app.html and 404.html)
 npm run preview   # serve dist/ at http://127.0.0.1:4173
 ```
 
@@ -27,16 +27,18 @@ Public routes: `/` landing page, `/privacy` policy, `/contact`; the analytics wo
 ```
 ├── src/            Application code (components, services, config, public pages)
 ├── public/         First-party assets: DuckDB-WASM worker scripts and engine binaries, fonts,
-│                   robots.txt and sitemap.xml
+│                   robots.txt, sitemap.xml and the 1200 × 630 social card in og/
 │                   (in production the two oversized .wasm binaries are served from the
 │                   operator's R2 domain rather than uploaded to Pages)
-├── tests/          20 test files — the deterministic contract, provider transport,
+├── scripts/        prerender.tsx — renders every route document into dist/ after vite build
+├── tests/          21 test files — the deterministic contract, provider transport,
 │                   memory cleanup, summary correctness, security regressions, public-site
-│                   routing and disclosure contracts
+│                   routing, disclosure and SEO metadata contracts
 ├── docs/           Engineering documentation
 │   ├── ARCHITECTURE.md     Pipeline and module map
 │   ├── SECURITY.md         Security architecture and SQL sandboxing
 │   ├── PRIVACY.md          Outbound data policy and credential threat model
+│   ├── SEO.md              Metadata, social card, pre-rendering and Search Console checklist
 │   ├── TESTING.md          Test suite and regression policy
 │   ├── DEPLOYMENT.md       Build reproducibility, hosting, checklists
 │   └── verification/       Release verification evidence and sign-off
@@ -59,6 +61,7 @@ Public routes: `/` landing page, `/privacy` policy, `/contact`; the analytics wo
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Plan → validate → execute → summarize pipeline, module map. |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security posture, client-side execution boundary, SQL sandboxing. |
 | [docs/PRIVACY.md](docs/PRIVACY.md) | What is (and is never) transmitted to providers; BYOK threat model. |
+| [docs/SEO.md](docs/SEO.md) | Route metadata, canonical URLs, social card, pre-rendering, Search Console checklist. |
 | [docs/TESTING.md](docs/TESTING.md) | Test inventory and regression policy. |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Reproducible builds, hosting options, deployment checklists. |
 | [docs/verification/README.md](docs/verification/README.md) | Audit → verification → production approval → smoke test → R2 remediation → production-quality remediation → v1.2 release candidate → v1.2 live verification → sign-off. |
