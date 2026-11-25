@@ -1,36 +1,26 @@
 import React from 'react';
-import { ArrowRight, Monitor, Moon, Sun } from 'lucide-react';
+import { ArrowRight, Moon, Sun } from 'lucide-react';
 import { QueryMindLogo } from '../QueryMindLogo';
-import { NEXT_THEME_PREFERENCE, type ThemePreference } from '../../services/theme';
+import type { ResolvedTheme } from '../../services/theme';
 import type { PublicRoute } from '../../services/publicRoutes';
-
-const THEME_PREFERENCE_TEXT: Record<ThemePreference, string> = {
-  light: 'Light',
-  dark: 'Dark',
-  system: 'System default',
-};
 
 interface PublicNavProps {
   route: PublicRoute;
   isDarkMode: boolean;
-  themePreference: ThemePreference;
-  onCycleThemePreference: () => void;
+  onSelectTheme: (theme: ResolvedTheme) => void;
 }
 
 const sectionLink =
   'rounded-lg px-2.5 py-1.5 text-xs font-medium text-text-secondary transition-colors duration-fast hover:bg-surface-secondary hover:text-text-primary focus-ring';
 const mobileSectionLink =
   'inline-flex min-h-6 items-center rounded text-xs font-medium text-text-secondary transition-colors duration-fast hover:text-text-primary focus-ring';
+const themeButton =
+  'btn-interactive inline-flex h-7 w-7 items-center justify-center rounded-lg border transition-colors duration-fast focus-ring';
+const themeButtonActive = 'border-border-strong bg-surface-secondary text-text-primary';
+const themeButtonIdle =
+  'border-border-subtle text-text-muted hover:border-border-strong hover:text-text-primary';
 
-export const PublicNav: React.FC<PublicNavProps> = ({
-  route,
-  isDarkMode,
-  themePreference,
-  onCycleThemePreference,
-}) => {
-  const themeLabel = `Theme: ${THEME_PREFERENCE_TEXT[themePreference]} (showing ${
-    isDarkMode ? 'dark' : 'light'
-  }). Activate to switch to ${THEME_PREFERENCE_TEXT[NEXT_THEME_PREFERENCE[themePreference]]}.`;
+export const PublicNav: React.FC<PublicNavProps> = ({ route, isDarkMode, onSelectTheme }) => {
   const onLanding = route === 'landing';
   const sectionHref = (id: string) => (onLanding ? `#${id}` : `/#${id}`);
 
@@ -75,24 +65,28 @@ export const PublicNav: React.FC<PublicNavProps> = ({
           </nav>
 
           <div className="flex flex-shrink-0 items-center gap-1.5 sm:gap-2">
-            <button
-              type="button"
-              onClick={onCycleThemePreference}
-              className="btn-interactive rounded-lg border border-border-subtle p-1.5 text-text-muted transition-colors duration-fast hover:text-text-primary focus-ring"
-              aria-label={themeLabel}
-              title={themeLabel}
-            >
-              {themePreference === 'system' ? (
-                <Monitor className="h-4 w-4" />
-              ) : isDarkMode ? (
-                <Sun className="h-4 w-4 text-warning" />
-              ) : (
-                <Moon className="h-4 w-4" />
-              )}
-            </button>
-            <span role="status" className="sr-only">
-              {`Theme ${THEME_PREFERENCE_TEXT[themePreference]}, showing ${isDarkMode ? 'dark' : 'light'}.`}
-            </span>
+            <div role="group" aria-label="Theme" className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => onSelectTheme('light')}
+                aria-pressed={!isDarkMode}
+                aria-label="Light theme"
+                title="Light theme"
+                className={`${themeButton} ${isDarkMode ? themeButtonIdle : themeButtonActive}`}
+              >
+                <Sun className={`h-4 w-4 ${isDarkMode ? '' : 'text-warning'}`} />
+              </button>
+              <button
+                type="button"
+                onClick={() => onSelectTheme('dark')}
+                aria-pressed={isDarkMode}
+                aria-label="Dark theme"
+                title="Dark theme"
+                className={`${themeButton} ${isDarkMode ? themeButtonActive : themeButtonIdle}`}
+              >
+                <Moon className={`h-4 w-4 ${isDarkMode ? 'text-accent' : ''}`} />
+              </button>
+            </div>
 
             <a
               href="/app"

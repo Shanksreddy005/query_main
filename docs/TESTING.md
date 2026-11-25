@@ -11,7 +11,7 @@ npm run build     # production build (must succeed with tests green)
 
 **Verified working-tree status (2026-11-22):** 435 tests / 111 suites / 19 test files / 0 fail; type check clean; production build succeeds. The earlier v1.0 release sign-off recorded 301 tests / 83 suites on 2026-11-17 — a historical measurement preserved in [verification/release-sign-off.md](verification/release-sign-off.md).
 
-**Landing-page pass (2026-11-25):** 467 tests / 118 suites / 20 test files / 0 fail; type check clean; two consecutive production builds byte-identical. This tree adds the public landing, privacy and contact pages and has not been deployed.
+**Public-site pass (2026-11-25):** 467 tests / 118 suites / 20 test files / 0 fail; type check clean; two consecutive production builds byte-identical. The landing, privacy and contact pages were deployed the same day (query_prod `aa0a7e6`). The working tree then replaced the public header's three-state theme cycle with two explicit light/dark buttons; the suite count is unchanged.
 
 ## Test inventory (`tests/`)
 

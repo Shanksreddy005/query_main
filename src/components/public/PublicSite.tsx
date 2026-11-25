@@ -13,7 +13,7 @@ import { NotFoundPage } from '../../pages/NotFoundPage';
  * DuckDB worker or provider request can start from these routes.
  */
 export const PublicSite: React.FC<{ route: Exclude<PublicRoute, 'workspace'> }> = ({ route }) => {
-  const { preference, resolved, cyclePreference } = useTheme();
+  const { resolved, setPreference } = useTheme();
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-text-primary">
@@ -26,8 +26,7 @@ export const PublicSite: React.FC<{ route: Exclude<PublicRoute, 'workspace'> }> 
       <PublicNav
         route={route}
         isDarkMode={resolved === 'dark'}
-        themePreference={preference}
-        onCycleThemePreference={cyclePreference}
+        onSelectTheme={setPreference}
       />
       <main id="main-content" tabIndex={-1} className="flex-1">
         {route === 'landing' && <LandingPage />}

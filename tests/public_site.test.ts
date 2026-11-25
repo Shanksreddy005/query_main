@@ -153,11 +153,14 @@ describe('Public navigation and footer', () => {
     assert.ok(!/Inc\.|LLC|Ltd\.|registered office/i.test(footer), 'no invented legal entity');
   });
 
-  it('keeps one theme owner and a labelled control', () => {
+  it('offers exactly two theme buttons and keeps one theme owner', () => {
     assert.match(site, /useTheme\(\)/);
     assert.ok(!/documentElement\.classList/.test(publicSources), 'only the theme service writes the class');
-    assert.match(nav, /aria-label=\{themeLabel\}/);
-    assert.match(nav, /NEXT_THEME_PREFERENCE/);
+    assert.match(nav, /aria-label="Light theme"/);
+    assert.match(nav, /aria-label="Dark theme"/);
+    assert.match(nav, /aria-pressed=\{!isDarkMode\}/);
+    assert.match(nav, /aria-pressed=\{isDarkMode\}/);
+    assert.ok(!/Monitor|System default/.test(nav), 'the three-state system control is gone');
     assert.ok(!/\bdark:[a-z-]/.test(publicSources), 'no OS-driven dark: variants');
   });
 });
