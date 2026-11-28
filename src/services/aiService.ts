@@ -687,6 +687,124 @@ export function generateDatasetSuggestions(dataset: Dataset): string[] {
 }
 
 /**
+ * Column-name fragments that carry no identifying meaning on their own. Shared by the scope
+ * guard and the column preflight so both ignore the same suffixes ("order_id" -> "order").
+ */
+const GENERIC_COLUMN_PARTS = new Set(['id', 'name', 'date', 'pct', 'usd', 'num', 'value', 'type', 'code', 'status']);
+
+/**
+ * Documented synonym groups. A token is only resolved through this map when it is
+ * identifier-shaped (contains "_"), so ordinary prose is never treated as a column reference.
+ * A token is accepted when its group contains a column the dataset actually stores.
+ */
+const COLUMN_SYNONYM_GROUPS: string[][] = [
+  ['mrr', 'arr', 'revenue', 'monthly_revenue'],
+  ['churn_status', 'status', 'account_status', 'lifecycle_status'],
+  ['support_tickets', 'support_ticket', 'ticket_count'],
+  ['active_users', 'active_user', 'seat_count', 'seats'],
+  ['nps_score', 'nps'],
+  ['signup_date', 'start_date', 'created_at', 'joined_at', 'registration_date'],
+  ['customer_name', 'company_name', 'client_name', 'account_name'],
+  ['plan_tier', 'tier', 'subscription_tier'],
+  ['product', 'product_name', 'item', 'sku'],
+];
+
+const SNAKE_CASE_TOKEN = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g;
+
+// Only the leading rows are scanned for underscore-bearing cell values. This guard exists to
+// stop legitimate values like "in_progress" from being read as absent columns; it is not a
+// data index. A value that appears only after this window and outside the 4-value samples is
+// still handled by the rest of the preflight, which fails closed without a provider call.
+const CELL_VALUE_SCAN_ROW_LIMIT = 200;
+
+function normalizeCellValue(value: unknown): string {
+  return typeof value === 'string' ? value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() : '';
+}
+
+export interface ColumnReferenceCheck {
+  outOfScope: boolean;
+  reason?: string;
+}
+
+/**
+ * Deterministic local preflight for identifier-shaped tokens. A question that names
+ * "churn_risk" or "nps_score_v2" is asking about a column the table does not have; sending it
+ * to a provider only asks the provider to guess. The check is intentionally narrow: only
+ * snake_case tokens are considered, tokens that match stored columns or documented synonyms
+ * pass, tokens that mirror a stored cell value pass, and tokens that resolve to a real column
+ * are answered with that column instead of a substitution.
+ */
+export function checkUnknownColumnReferences(question: string, dataset: Dataset): ColumnReferenceCheck {
+  const columns = dataset.columns.map((c) => c.name);
+  const columnByLower = new Map(columns.map((c) => [c.toLowerCase(), c]));
+  const tableNames = new Set(
+    [dataset.tableName, dataset.id, dataset.name]
+      .filter(Boolean)
+      .flatMap((name) => [name.toLowerCase(), name.toLowerCase().replace(/[^a-z0-9]/g, '_')])
+  );
+  const cellValues = new Set(
+    dataset.columns.flatMap((c) =>
+      (c.sampleValues || []).map(normalizeCellValue).filter((value) => value.length > 0)
+    )
+  );
+  for (const row of dataset.data.slice(0, CELL_VALUE_SCAN_ROW_LIMIT)) {
+    for (const value of Object.values(row)) {
+      const normalized = normalizeCellValue(value);
+      if (normalized) cellValues.add(normalized);
+    }
+  }
+
+  const tokens = Array.from(new Set(question.toLowerCase().match(SNAKE_CASE_TOKEN) || []));
+  for (const token of tokens) {
+    if (columnByLower.has(token) || tableNames.has(token)) continue;
+
+    // A cell value such as "Enterprise_Cloud" or "in_progress" written with underscores is
+    // content, not a column.
+    const spaced = token.replace(/_/g, ' ');
+    let matchesCellValue = false;
+    for (const value of cellValues) {
+      if (value.includes(spaced)) {
+        matchesCellValue = true;
+        break;
+      }
+    }
+    if (matchesCellValue) continue;
+
+    const synonymGroup = COLUMN_SYNONYM_GROUPS.find((group) => group.includes(token));
+    if (synonymGroup && synonymGroup.some((synonym) => columnByLower.has(synonym))) continue;
+
+    const tokenParts = token.split('_').filter((part) => part.length > 2 && !GENERIC_COLUMN_PARTS.has(part));
+    const candidates = columns.filter((column) => {
+      const lower = column.toLowerCase();
+      if (lower.includes(token) || token.includes(lower)) return true;
+      const parts = lower.split(/[^a-z0-9]/).filter((part) => part.length > 2 && !GENERIC_COLUMN_PARTS.has(part));
+      return tokenParts.some((part) => parts.includes(part));
+    });
+
+    const listed = candidates.slice(0, 4).map((c) => `"${c}"`).join(' or ');
+    if (candidates.length === 1) {
+      return {
+        outOfScope: true,
+        reason: `"${token}" is not a column in "${dataset.name}". The closest stored column is ${listed}. Rephrase the question with that exact column name; nothing was sent to an AI provider.`,
+      };
+    }
+    if (candidates.length > 1) {
+      return {
+        outOfScope: true,
+        reason: `"${token}" is not an exact column in "${dataset.name}". It could refer to ${listed}. Clarify which stored column you mean; no assumption was made and nothing was sent to an AI provider.`,
+      };
+    }
+    const available = columns.slice(0, 6).map((c) => `"${c}"`).join(', ');
+    return {
+      outOfScope: true,
+      reason: `"${token}" is not a column in "${dataset.name}". Stored columns include ${available}${columns.length > 6 ? ', ...' : ''}. Rephrase with a stored column name; nothing was sent to an AI provider.`,
+    };
+  }
+
+  return { outOfScope: false };
+}
+
+/**
  * Checks if a natural language question is semantically out of bounds of the dataset.
  */
 export function isQueryOutOfScope(
@@ -698,7 +816,6 @@ export function isQueryOutOfScope(
   const words = cleanQ.split(/\s+/).filter((w) => w.length > 1);
 
   // "Who are the top customers by MRR?" opens like trivia but names the table's own columns.
-  const GENERIC_COLUMN_PARTS = new Set(['id', 'name', 'date', 'pct', 'usd', 'num', 'value', 'type', 'code', 'status']);
   const columnParts = new Set<string>();
   dataset.columns.forEach((c) =>
     c.name.toLowerCase().split(/[^a-z0-9]/).forEach((part) => {
@@ -708,6 +825,24 @@ export function isQueryOutOfScope(
   const namesOwnColumn = words.some(
     (w) => columnParts.has(w) || columnParts.has(w.replace(/es$/, '')) || columnParts.has(w.replace(/s$/, ''))
   );
+
+  // A conversational opener ("Why is ... so high?") is still an analytical question when it
+  // names a stored category value or a documented metric synonym. Trivia without either is
+  // still rejected below; the provider-side scope check remains the fallback for the rest.
+  const datasetTermTokens = new Set<string>([
+    'revenue', 'mrr', 'arr', 'sales', 'profit', 'churn', 'tickets', 'nps', 'users',
+    'discount', 'quantity', 'units', 'retention', 'margin', 'margins',
+  ]);
+  dataset.columns.forEach((c) => {
+    (c.sampleValues || []).forEach((value) => {
+      if (typeof value !== 'string' || value.length >= 30) return;
+      value.toLowerCase().split(/\s+/).forEach((part) => {
+        const clean = part.replace(/[^a-z0-9-]/g, '');
+        if (clean.length > 2) datasetTermTokens.add(clean);
+      });
+    });
+  });
+  const namesDatasetTerm = namesOwnColumn || words.some((w) => datasetTermTokens.has(w));
 
   // 1. Explicit Out-of-Domain Keywords & Patterns (Memes, Trivia, Politics, General knowledge)
   const outOfScopeRules: { pattern: RegExp; reason: string; yieldsToColumnReference?: boolean }[] = [
@@ -751,7 +886,7 @@ export function isQueryOutOfScope(
   ];
 
   for (const { pattern, reason, yieldsToColumnReference } of outOfScopeRules) {
-    if (yieldsToColumnReference && namesOwnColumn) continue;
+    if (yieldsToColumnReference && namesDatasetTerm) continue;
     if (pattern.test(q)) {
       return {
         outOfScope: true,
@@ -1738,7 +1873,23 @@ export async function processNaturalLanguageQuery(
     };
   }
 
-  // 2. Check for Verified Curated 1-Click Queries (available offline/keyless).
+  // 2. Local column grounding: a question naming a column the table does not store is answered
+  // here, before curation, metric checks or any provider dispatch. The provider must never be
+  // asked to guess a column that can be disproved locally.
+  const columnCheck = checkUnknownColumnReferences(question, dataset);
+  if (columnCheck.outOfScope) {
+    return {
+      isOutOfScope: true,
+      outOfScopeReason: columnCheck.reason,
+      suggestedQuestions: generateDatasetSuggestions(dataset),
+      sql: '',
+      reasoningSteps: [],
+      insight: { summary: '', highlights: [] },
+      usedProvider: 'QueryMind Column Grounding Guard',
+    };
+  }
+
+  // 3. Check for Verified Curated 1-Click Queries (available offline/keyless).
   // Curated SQL goes through the SAME contract as the LLM path: execute in DuckDB,
   // validate results, then synthesize the narrative from the actual returned rows.
   // A curated template that fails on this dataset falls through to the LLM path.
@@ -1808,7 +1959,7 @@ export async function processNaturalLanguageQuery(
     }
   }
 
-  // 3. Check for Undefined Metrics / Clarification Needs (Test Group C)
+  // 4. Check for Undefined Metrics / Clarification Needs (Test Group C)
   const metricCheck = checkMetricAvailability(question, semanticSchema);
   if (!metricCheck.isAvailable) {
     return {
@@ -1841,12 +1992,12 @@ export async function processNaturalLanguageQuery(
     };
   }
 
-  // 3. Check API Key configuration
+  // 5. Check API Key configuration
   const hasUserKey = keyConfig && keyConfig.key && keyConfig.key.trim().length > 0;
   const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || (import.meta as any).env?.GEMINI_API_KEY;
   const activeKey = hasUserKey ? keyConfig.key : envKey;
 
-  // 4. If No API Key configured for arbitrary custom queries:
+  // 6. If No API Key configured for arbitrary custom queries:
   // Strictly DO NOT guess with greedy regex! Provide clear user guidance instead.
   if (!activeKey) {
     throw new Error(
@@ -1860,7 +2011,7 @@ export async function processNaturalLanguageQuery(
     : DEFAULT_MODELS[provider];
   const systemPrompt = buildPromptSystem(semanticSchema);
 
-  // 5. Bounded Agent Self-Correction Loop (Up to MAX_AGENT_ROUNDS = 5)
+  // 7. Bounded Agent Self-Correction Loop (Up to MAX_AGENT_ROUNDS = 5)
   let lastErrors: string[] = [];
   let currentSql = '';
   let currentPlan: QueryPlan | undefined;

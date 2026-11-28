@@ -98,19 +98,27 @@ export const PrivacyPage: React.FC = () => {
         and structural schema metadata derived from the dataset: the table name (derived from the
         uploaded file name), total row count, column names, data types, inferred column roles,
         distinct-value counts, synthetic category labels in place of the real categorical values,
-        and — only for tables of at least ten rows — numeric ranges. For smaller tables those ranges
-        are withheld. For columns whose names identify them as PII, no values or ranges are included,
-        only the distinct count. Error text is redacted before any diagnostic follow-up is sent:
-        quoted cell values are replaced with a placeholder so dataset values do not travel in error
-        messages.
+        and — only for tables of at least 25 rows — numeric ranges widened outward to two significant
+        figures. A bound that already sits at that precision may be transmitted unchanged, so the
+        widening reduces precision but is not a guarantee that the exact minimum or maximum cannot
+        appear; it is a minimisation measure, not an anonymity guarantee. For smaller tables those
+        ranges are withheld. For columns whose
+        names identify them as PII, no values or ranges are included, only the distinct count. Error
+        text is redacted before any diagnostic follow-up is sent: quoted cell values are replaced
+        with a placeholder so dataset values do not travel in error messages.
       </p>
       <p className={body}>
-        Raw dataset rows and result rows are not included in provider prompts. The provider is a
-        separate recipient that determines its own retention, logging and training practices under
-        its own terms; QueryMind cannot control or guarantee provider-side retention. If no key is
-        configured, verified sample questions on the bundled datasets are answered by a curated local
-        path and no provider is contacted; arbitrary questions are refused with guidance instead of
-        being sent anywhere.
+        Raw dataset rows and result rows are not included in provider prompts. A question that names
+        an identifier-shaped column (for example <span className={code}>churn_risk</span>) that the
+        active table does not store is refused in your browser before any provider request is made.
+        Questions that pass the local scope and column checks are still sent to the provider, which
+        separately decides whether it considers them in scope; that provider-side classification is
+        a second check, not a guarantee that a question is appropriate or that no provider-side
+        retention occurs. The provider is a separate recipient that determines its own retention,
+        logging and training practices under its own terms; QueryMind cannot control or guarantee
+        provider-side retention. If no key is configured, verified sample questions on the bundled
+        datasets are answered by a curated local path and no provider is contacted; arbitrary
+        questions are refused with guidance instead of being sent anywhere.
       </p>
 
       <h2 className={heading}>5. API keys and credential handling</h2>

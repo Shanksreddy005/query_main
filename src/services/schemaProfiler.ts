@@ -160,20 +160,52 @@ export function isPiiOrSensitiveColumn(columnName: string): boolean {
   );
 }
 
-// Below this many records a numeric min/max is a statement about individual rows, not a
-// summary of the table, so the range is withheld from provider prompts.
-const MIN_ROWS_FOR_RANGE_DISCLOSURE = 10;
+// Evidence-based floor for disclosing a numeric min/max to a provider. The bundled demo
+// datasets hold 15 and 25 rows, and a row must not be identifiable from the disclosed range.
+// At 25 rows a single record is at most 4% of the table, while typical small extracts
+// (tens of rows) still give the planner the bounds it needs for filters.
+const MIN_ROWS_FOR_RANGE_DISCLOSURE = 25;
+
+/**
+ * Rounds away from the data so the disclosed interval still contains the true min and max.
+ * The lower bound is not allowed above the data and the upper bound is not allowed below it;
+ * float64 and toPrecision() can both snap a bound one unit inward, so the result is stepped
+ * outward until it encloses the value. A bound already at two significant figures is returned
+ * unchanged — widening is a minimisation measure, not a guarantee that the exact extreme
+ * cannot appear. Returns NaN when no finite two-significant-figure bound exists; the caller
+ * then withholds the whole range.
+ */
+export function roundRangeBound(value: number, direction: 'down' | 'up'): number {
+  if (!Number.isFinite(value)) return NaN;
+  if (value === 0) return value;
+  const magnitude = Math.floor(Math.log10(Math.abs(value)));
+  const step = Math.pow(10, magnitude - 1);
+  if (!Number.isFinite(step) || step === 0) return NaN;
+  const scaled = value / step;
+  const outward = direction === 'down' ? -1 : 1;
+  let units = direction === 'down' ? Math.floor(scaled + 1e-9) : Math.ceil(scaled - 1e-9);
+  for (let attempt = 0; attempt < 64; attempt++) {
+    const candidate = Number((units * step).toPrecision(12));
+    if (!Number.isFinite(candidate)) return NaN;
+    const encloses = direction === 'down' ? candidate <= value : candidate >= value;
+    if (encloses) return candidate;
+    units += outward;
+  }
+  return NaN;
+}
 
 export interface SchemaPromptOptions {
   /**
    * When true (default), no cell values are transmitted. Column names, types, roles and
-   * synthetic examples are, together with aggregate statistics (distinct counts and numeric
-   * min/max where enough rows sit behind them) — see MIN_ROWS_FOR_RANGE_DISCLOSURE.
+   * synthetic examples are, together with aggregate statistics (distinct counts and outward-
+   * rounded numeric min/max where enough rows sit behind them) — see
+   * MIN_ROWS_FOR_RANGE_DISCLOSURE.
    */
   strictZeroContentEgress?: boolean;
   /**
    * When true, permits low-cardinality non-PII categorical enums (e.g. ['Enterprise', 'Starter'])
-   * to be transmitted to assist with exact WHERE filters.
+   * to be transmitted to assist with exact WHERE filters. Off by default; the production planner
+   * never enables it.
    */
   allowCategoricalEnums?: boolean;
 }
@@ -181,13 +213,13 @@ export interface SchemaPromptOptions {
 /**
  * Builds a prompt-friendly semantic description of the schema under the strict zero-row egress
  * policy. Row values and cell pairings are never included, but aggregate statistics — distinct
- * counts and, for tables of at least MIN_ROWS_FOR_RANGE_DISCLOSURE rows, numeric min/max — are,
- * because the planner needs them to write valid filters and ranges.
+ * counts and, for tables of at least MIN_ROWS_FOR_RANGE_DISCLOSURE rows, outward-rounded numeric
+ * min/max — are, because the planner needs them to write valid filters and ranges.
  * Masks PII and high-cardinality entity identifiers to prevent data leakage to external models.
  */
 export function formatSemanticSchemaPrompt(
   schema: SemanticSchema,
-  options: SchemaPromptOptions = { strictZeroContentEgress: true, allowCategoricalEnums: true }
+  options: SchemaPromptOptions = { strictZeroContentEgress: true, allowCategoricalEnums: false }
 ): string {
   const allowEnums = options.allowCategoricalEnums && !options.strictZeroContentEgress;
 
@@ -220,12 +252,20 @@ export function formatSemanticSchemaPrompt(
         }
 
         if (c.min !== undefined && c.max !== undefined) {
-          // On a two-row table the min and max *are* the data, so a range is only disclosed
+          // On a small table the min and max *are* the data, so a range is only disclosed
           // when enough records sit behind it for the statistic to stay an aggregate.
-          line +=
-            schema.rowCount >= MIN_ROWS_FOR_RANGE_DISCLOSURE
-              ? ` [Range: ${c.min} to ${c.max}]`
-              : ' [Range: withheld, dataset too small for a range to stay aggregate]';
+          if (schema.rowCount < MIN_ROWS_FOR_RANGE_DISCLOSURE) {
+            line += ' [Range: withheld, dataset too small for a range to stay aggregate]';
+          } else {
+            const disclosedMin = typeof c.min === 'number' ? roundRangeBound(c.min, 'down') : c.min;
+            const disclosedMax = typeof c.max === 'number' ? roundRangeBound(c.max, 'up') : c.max;
+            const nonFinite =
+              (typeof disclosedMin === 'number' && !Number.isFinite(disclosedMin)) ||
+              (typeof disclosedMax === 'number' && !Number.isFinite(disclosedMax));
+            line += nonFinite
+              ? ' [Range: withheld, no safe rounded bound could be produced]'
+              : ` [Range: ${disclosedMin} to ${disclosedMax}]`;
+          }
         }
         return line;
       })
@@ -233,10 +273,10 @@ export function formatSemanticSchemaPrompt(
 
   const egressPolicyNotice = allowEnums
     ? `ZERO-ROW EGRESS POLICY: ENABLED (No data rows are transmitted. Column names, inferred types and roles, cardinalities and non-PII categorical values are included${
-        schema.rowCount >= MIN_ROWS_FOR_RANGE_DISCLOSURE ? ', and numeric min/max ranges are included because the table holds at least ' + MIN_ROWS_FOR_RANGE_DISCLOSURE + ' rows' : ', while numeric min/max ranges are withheld for this small table'
+        schema.rowCount >= MIN_ROWS_FOR_RANGE_DISCLOSURE ? ', and numeric min/max ranges widened outward to two significant figures are included because the table holds at least ' + MIN_ROWS_FOR_RANGE_DISCLOSURE + ' rows (a range that no finite bound can contain is withheld)' : ', while numeric min/max ranges are withheld for this small table'
       }.)`
     : `STRICT ZERO-ROW EGRESS POLICY: ENABLED (No data rows or cell pairings are transmitted. Included: column names, inferred types and roles, distinct-value counts${
-        schema.rowCount >= MIN_ROWS_FOR_RANGE_DISCLOSURE ? ' and numeric min/max ranges (the table holds at least ' + MIN_ROWS_FOR_RANGE_DISCLOSURE + ' rows)' : ' while numeric min/max ranges are withheld because this table is small enough for a range to identify individual rows'
+        schema.rowCount >= MIN_ROWS_FOR_RANGE_DISCLOSURE ? ' and numeric min/max ranges widened outward to two significant figures (the table holds at least ' + MIN_ROWS_FOR_RANGE_DISCLOSURE + ' rows; a range that no finite bound can contain is withheld)' : ' while numeric min/max ranges are withheld because this table is small enough for a range to identify individual rows'
       }. Synthetic category labels are used in place of real values.)`;
 
   return `

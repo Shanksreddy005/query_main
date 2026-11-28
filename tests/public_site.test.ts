@@ -102,7 +102,7 @@ describe('Landing page — the required copy survives edits', () => {
 
   it('describes the provider role without giving it execution authority', () => {
     assert.ok(text.includes('it acts as a semantic planner and never executes the query itself'));
-    assert.ok(text.includes('Raw rows and result rows are not sent.'));
+    assert.ok(text.includes('Raw rows and query-result rows are not sent.'));
   });
 
   it('renders a labelled schematic instead of an invented screenshot', () => {

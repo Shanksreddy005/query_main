@@ -78,7 +78,7 @@ const FAQS = [
   {
     question: 'What is sent to the AI provider?',
     answer:
-      'Your question and structural schema metadata: column names, types, inferred roles, distinct counts, masked category labels and, for tables of at least ten rows, numeric ranges. Raw rows and result rows are not sent. Columns identified as PII have their values replaced with synthetic masks.',
+      'Your question and structural schema metadata: column names, types, inferred roles, distinct counts, masked category labels and, only for tables of at least 25 rows, numeric ranges widened outward to two significant figures. A bound already at that precision may be sent unchanged, so widening is a minimisation measure, not an anonymity guarantee. Raw rows and query-result rows are not sent. Columns identified as PII have their values replaced with synthetic masks. A question that names an identifier-shaped column the table does not store is refused in the browser, without contacting a provider.',
   },
   {
     question: 'Which providers can I use?',

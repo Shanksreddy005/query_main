@@ -392,9 +392,9 @@ export const TelemetryAuditorModal: React.FC<TelemetryAuditorModalProps> = ({
                     <li>Column names (e.g. <code className="text-meta bg-surface px-1 py-0.5 rounded">mrr</code>, <code className="text-meta bg-surface px-1 py-0.5 rounded">plan_tier</code>)</li>
                     <li>Inferred data types and assigned roles (<code className="text-meta bg-surface px-1 py-0.5 rounded">INTEGER</code>, <code className="text-meta bg-surface px-1 py-0.5 rounded">VARCHAR</code>, measure / dimension / identifier)</li>
                     <li>Distinct-value counts per column (e.g. <code className="text-meta bg-surface px-1 py-0.5 rounded">Distinct: 4</code>)</li>
-                    <li>{datasetRowCount >= 10
-                      ? <>Numeric min/max ranges per measure column (<code className="text-meta bg-surface px-1 py-0.5 rounded">Range: min to max</code>) — sent because at least 10 rows sit behind them</>
-                      : 'Numeric min/max ranges are withheld for this table; on a table this small a range can identify individual rows'}</li>
+                    <li>{datasetRowCount >= 25
+                      ? <>Numeric min/max ranges per measure column (<code className="text-meta bg-surface px-1 py-0.5 rounded">Range: min to max</code>) — sent only because at least 25 rows sit behind them, and widened outward to two significant figures; a bound already at that precision may be unchanged, so this is a minimisation measure, not an anonymity guarantee</>
+                      : 'Numeric min/max ranges are withheld for this table; below 25 rows a range can identify individual rows'}</li>
                     <li>Real categorical cell values are replaced with synthetic labels such as <code className="text-meta bg-surface px-1 py-0.5 rounded">"Category_A"</code></li>
                     <li>Canonical SQL blueprint patterns for DuckDB syntax</li>
                   </ul>

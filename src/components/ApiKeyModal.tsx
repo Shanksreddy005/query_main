@@ -197,7 +197,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
                   ? 'This key is kept in this browser\'s local storage on your device so it survives a reload, and is sent only to the provider endpoint you selected.'
                   : 'This key is held in memory for the current tab only, is not written to local storage, and is sent only to the provider endpoint you selected.'}<br />
                 • <strong>Local DuckDB Engine:</strong> Your dataset is parsed and queried in-memory via DuckDB-WASM; result rows are not sent anywhere.<br />
-                • <strong>Planning Prompt:</strong> Dataset rows are never uploaded to the AI. The planning request carries your question plus column names, inferred types, distinct-value counts and numeric min/max ranges, which for a small table can narrow down individual values.
+                • <strong>Planning Prompt:</strong> Dataset rows are never uploaded to the AI. The planning request carries your question plus column names, inferred types, distinct-value counts and — only when the table holds at least 25 rows — numeric min/max ranges widened outward to two significant figures (a bound already at that precision may be sent unchanged; widening minimises precision but is not an anonymity guarantee).
               </p>
             </div>
           </div>

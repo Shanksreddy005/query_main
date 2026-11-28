@@ -766,11 +766,11 @@ describe('Final release verification — egress claims match the payload', () =>
   });
 
   it('states the policy the payload actually applies once a table is large enough', () => {
-    const rows = Array.from({ length: 12 }, (_, i) => ({ team: `T${i % 3}`, salary_usd: 50000 + i * 1000 }));
+    const rows = Array.from({ length: 30 }, (_, i) => ({ team: `T${i % 3}`, salary_usd: 50000 + i * 1000 }));
     const prompt = buildPrompt(rows);
     assert.match(prompt, /STRICT ZERO-ROW EGRESS POLICY/);
-    assert.match(prompt, /Range: 50000 to 61000/);
-    assert.match(prompt, /at least 10 rows/);
+    assert.match(prompt, /Range: 50000 to 79000/);
+    assert.match(prompt, /at least 25 rows/);
     assert.ok(!prompt.includes('zero cell values'), 'the prompt may not claim more than it sends');
     assert.ok(!prompt.includes('"T0"'), 'categorical values stay synthetic under strict egress');
   });
@@ -811,7 +811,7 @@ describe('Final release verification — privacy wording states what actually le
     for (const needle of [/Distinct-value counts per column/, /Numeric min\/max ranges/, /synthetic labels/, /Table name and total row count/]) {
       assert.match(sources.auditor, needle, `the egress list omits ${needle}`);
     }
-    assert.match(sources.auditor, /datasetRowCount >= 10/, 'range disclosure must be stated conditionally, matching the profiler threshold');
+    assert.match(sources.auditor, /datasetRowCount >= 25/, 'range disclosure must be stated conditionally, matching the profiler threshold');
     assert.match(sources.uploader, /aggregate statistics go only to the AI provider/i);
     assert.match(sources.onboarding, /rows are never sent anywhere/, 'upload screen must separate rows from statistics');
   });
