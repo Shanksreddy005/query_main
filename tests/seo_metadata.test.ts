@@ -136,8 +136,25 @@ describe('Indexing boundaries', () => {
     const locations = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]);
     assert.deepStrictEqual(locations, publicMeta.map((meta) => canonicalUrl(meta.canonicalPath!)));
     assert.ok(!sitemap.includes('/app'));
-    assert.ok(!/lastmod/.test(sitemap), 'no invented lastmod date');
     assert.match(sitemap, /<urlset xmlns="http:\/\/www\.sitemaps\.org\/schemas\/sitemap\/0\.9">/);
+  });
+
+  it('dates each sitemap URL with its last meaningful content change', () => {
+    const dates = [...sitemap.matchAll(/<lastmod>([^<]+)<\/lastmod>/g)].map((match) => match[1]);
+    assert.deepStrictEqual(dates, ['2026-11-28', '2026-11-25', '2026-11-25']);
+    dates.forEach((date) => {
+      assert.match(date, /^\d{4}-\d{2}-\d{2}$/, date);
+      assert.ok(new Date(`${date}T00:00:00Z`) <= new Date(), `${date} is not in the future`);
+    });
+    assert.strictEqual((sitemap.match(/<lastmod>/g) ?? []).length, 3, 'every URL carries a date');
+  });
+
+  it('omits optional hints Google ignores and keeps one well-formed urlset', () => {
+    assert.ok(!/changefreq|priority/.test(sitemap), 'no placeholder hints');
+    assert.strictEqual((sitemap.match(/<urlset/g) ?? []).length, 1);
+    assert.strictEqual((sitemap.match(/<\/urlset>/g) ?? []).length, 1);
+    assert.strictEqual((sitemap.match(/<url>/g) ?? []).length, (sitemap.match(/<\/url>/g) ?? []).length);
+    assert.match(sitemap, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
   });
 
   it('sets noindex for the workspace and unknown routes at mount', () => {
@@ -180,5 +197,75 @@ describe('Pre-render step', () => {
   it('keeps the client mount as createRoot, so pre-rendered markup cannot mismatch', () => {
     assert.match(main, /import \{ createRoot \} from 'react-dom\/client'/);
     assert.ok(!/hydrateRoot/.test(main));
+  });
+});
+
+describe('Structured data — homepage only', () => {
+  const scriptPattern = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/;
+
+  function landingGraph(): any {
+    const match = renderSeoBlock(LANDING_META).match(scriptPattern);
+    assert.ok(match, 'the landing block must carry the JSON-LD');
+    return JSON.parse(match ? match[1] : '');
+  }
+
+  it('is one parseable graph declaring WebSite and SoftwareApplication', () => {
+    const block = renderSeoBlock(LANDING_META);
+    assert.strictEqual((block.match(/application\/ld\+json/g) ?? []).length, 1);
+    const data = landingGraph();
+    assert.strictEqual(data['@context'], 'https://schema.org');
+    assert.deepStrictEqual(
+      data['@graph'].map((node: any) => node['@type']),
+      ['WebSite', 'SoftwareApplication']
+    );
+  });
+
+  it('keeps both entity URLs equal to the homepage canonical', () => {
+    const data = landingGraph();
+    const canonical = canonicalUrl('/');
+    data['@graph'].forEach((node: any) => assert.strictEqual(node.url, canonical, node['@type']));
+    const [website, software] = data['@graph'];
+    assert.strictEqual(website['@id'], 'https://querymind.in/#website');
+    assert.strictEqual(software['@id'], 'https://querymind.in/#software');
+    assert.strictEqual(software.publisher, undefined, 'no publisher points at the WebSite entity');
+  });
+
+  it('describes only shipped capabilities', () => {
+    const software = landingGraph()['@graph'][1];
+    assert.strictEqual(software.name, 'QueryMind');
+    assert.strictEqual(software.applicationCategory, 'BusinessApplication');
+    assert.strictEqual(software.operatingSystem, 'Web browser');
+    assert.ok(software.featureList.length >= 5);
+    software.featureList.forEach((feature: unknown) => assert.strictEqual(typeof feature, 'string'));
+  });
+
+  it('makes no offer, price, rating or review claim', () => {
+    const keys = new Set<string>();
+    const walk = (value: unknown): void => {
+      if (Array.isArray(value)) {
+        value.forEach(walk);
+      } else if (value && typeof value === 'object') {
+        Object.entries(value as Record<string, unknown>).forEach(([key, child]) => {
+          keys.add(key);
+          walk(child);
+        });
+      }
+    };
+    walk(landingGraph());
+    ['offers', 'price', 'priceCurrency', 'isAccessibleForFree', 'aggregateRating', 'review', 'ratingValue'].forEach(
+      (key) => assert.ok(!keys.has(key), `structured data must not carry ${key}`)
+    );
+  });
+
+  it('is absent from every non-homepage document', () => {
+    [PRIVACY_META, CONTACT_META, WORKSPACE_META, NOT_FOUND_META].forEach((meta) => {
+      assert.ok(!renderSeoBlock(meta).includes('ld+json'), `${meta.title} must not carry JSON-LD`);
+      assert.strictEqual(meta.structuredData, undefined, meta.title);
+    });
+  });
+
+  it('stays synchronized with the committed index.html head', () => {
+    assert.strictEqual((html.match(/application\/ld\+json/g) ?? []).length, 1);
+    assert.strictEqual(flat(seoBlock), flat(renderSeoBlock(LANDING_META)));
   });
 });

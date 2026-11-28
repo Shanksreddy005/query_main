@@ -2,12 +2,16 @@ export type PublicMetaRoute = 'landing' | 'privacy' | 'contact';
 
 export type MetaRobots = 'index,follow' | 'noindex,nofollow';
 
+type JsonLdValue = string | number | boolean | JsonLdValue[] | { [key: string]: JsonLdValue };
+
 export interface PageMeta {
   title: string;
   description: string;
   /** Absolute path appended to SITE_ORIGIN for the canonical URL; null asserts none. */
   canonicalPath: '/' | '/privacy' | '/contact' | null;
   robots: MetaRobots;
+  /** Structured data rendered into the document head; only the landing page carries one. */
+  structuredData?: JsonLdValue;
 }
 
 export const SITE_ORIGIN = 'https://querymind.in';
@@ -20,12 +24,44 @@ export const SOCIAL_IMAGE_WIDTH = 1200;
 export const SOCIAL_IMAGE_HEIGHT = 630;
 export const SOCIAL_IMAGE_ALT = 'QueryMind — Browser-Based Natural Language to SQL';
 
+// Facts only: every feature below ships in the application, and there is deliberately no offer,
+// price, rating or review property, so the markup stays an entity description rather than a claim.
+export const LANDING_STRUCTURED_DATA: JsonLdValue = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'WebSite',
+      '@id': 'https://querymind.in/#website',
+      url: 'https://querymind.in/',
+      name: 'QueryMind',
+    },
+    {
+      '@type': 'SoftwareApplication',
+      '@id': 'https://querymind.in/#software',
+      name: 'QueryMind',
+      url: 'https://querymind.in/',
+      description:
+        'Browser-based natural-language analytics: ask questions about a dataset in plain English, get validated SQL, and execute it locally with DuckDB-WASM.',
+      applicationCategory: 'BusinessApplication',
+      operatingSystem: 'Web browser',
+      featureList: [
+        'Natural-language questions to validated SQL',
+        'Local SQL execution with DuckDB-WASM',
+        'CSV upload and in-browser parsing',
+        'Interactive charts and evidence-grounded summaries',
+        'Bring-your-own-key configuration for Gemini, Groq and OpenAI',
+      ],
+    },
+  ],
+};
+
 export const LANDING_META: PageMeta = {
   title: 'QueryMind | Browser-Based Natural Language to SQL',
   description:
     'Ask questions about your data in plain English. QueryMind turns natural language into SQL and runs the analysis locally in your browser with DuckDB-WASM.',
   canonicalPath: '/',
   robots: 'index,follow',
+  structuredData: LANDING_STRUCTURED_DATA,
 };
 
 export const PRIVACY_META: PageMeta = {
@@ -118,8 +154,13 @@ export function renderSeoBlock(meta: PageMeta): string {
     '  <meta name="twitter:card" content="summary_large_image" />',
     tag('twitter:title', meta.title),
     tag('twitter:description', meta.description),
-    tag('twitter:image', SOCIAL_IMAGE_URL),
-    '  <!-- seo:end -->'
+    tag('twitter:image', SOCIAL_IMAGE_URL)
   );
+  if (meta.structuredData) {
+    // `<` is escaped so the payload can never close the script element early.
+    const json = JSON.stringify(meta.structuredData, null, 2).replace(/</g, '\\u003c');
+    lines.push('  <script type="application/ld+json">', json, '  </script>');
+  }
+  lines.push('  <!-- seo:end -->');
   return lines.join('\n');
 }

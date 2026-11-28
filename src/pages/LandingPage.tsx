@@ -152,7 +152,7 @@ export const LandingPage: React.FC = () => {
               id="hero-heading"
               className="mt-4 text-4xl font-semibold leading-[1.05] tracking-[-0.025em] text-text-primary sm:text-5xl"
             >
-              Explore your data through conversation.
+              Turn natural-language questions into SQL in your browser.
             </h1>
             <p className="mt-5 max-w-xl text-base leading-relaxed text-text-secondary sm:text-lg">
               QueryMind turns natural-language questions into analytical queries, interactive charts

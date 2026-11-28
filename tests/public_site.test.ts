@@ -64,7 +64,7 @@ describe('Landing page — the required copy survives edits', () => {
 
   it('states the accepted headline, subheadline and supporting line', () => {
     assert.ok(text.includes('Browser-based conversational analytics'));
-    assert.ok(text.includes('Explore your data through conversation.'));
+    assert.ok(text.includes('Turn natural-language questions into SQL in your browser.'));
     assert.ok(
       text.includes(
         'QueryMind turns natural-language questions into analytical queries, interactive charts and structured insights, with SQL execution powered by DuckDB-WASM in your browser.'

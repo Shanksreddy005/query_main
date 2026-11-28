@@ -1,7 +1,10 @@
 # QueryMind — SEO and Crawler Rendering
 
 This document describes what the public site now ships for search engines, social previews and
-crawlers, and what still has to be confirmed against the live origin after the next deployment.
+crawlers. The route documents have been live since the 2026-11-25 release, and the Phase 1 security
+headers were deployed on 2026-11-27; the measured behaviour on the live origin is recorded below.
+SEO Release 1 (homepage H1, homepage JSON-LD, sitemap dates, documentation) is implemented locally
+and is not deployed yet.
 
 ## Metadata
 
@@ -49,6 +52,26 @@ The card shows the product identity, the descriptor "Browser-Based Natural Langu
 question → validated SQL → local result schematic. It contains no usage statistics, testimonials,
 customer logos or performance claims.
 
+### Structured data
+
+The homepage carries exactly one JSON-LD block, rendered by `renderSeoBlock()` from
+`LANDING_STRUCTURED_DATA` in `src/services/siteMeta.ts`. It is a single `@graph` with two entities:
+`WebSite` (`https://querymind.in/#website`) and `SoftwareApplication`
+(`https://querymind.in/#software`), both with `url` equal to the homepage canonical, and
+`publisher` pointing at the `WebSite` node.
+
+The `SoftwareApplication` node states the name, a factual description, `applicationCategory`
+`BusinessApplication`, `operatingSystem` `Web browser`, and five `featureList` entries that all ship
+in the application. It deliberately carries **no** `offers`, price, `isAccessibleForFree`,
+`aggregateRating`, `review`, `ratingValue`, version, license or download figures. Valid structured
+data does not guarantee a rich result; without ratings or reviews this markup is an entity
+description only.
+
+`/privacy`, `/contact`, `/app` and `404.html` carry no JSON-LD, so no duplicate entities compete
+with the homepage graph. Tests parse the block with `JSON.parse`, assert one block and two node
+types, assert canonical consistency, assert the absence of offer/rating properties, and assert the
+block is absent from every other document.
+
 ## Rendering architecture
 
 The application is still a Vite + React client-side app, but every route now has its own document
@@ -76,9 +99,9 @@ theme buttons, route metadata updates and the workspace mount all run exactly as
 
 Cloudflare Pages serves the HTML file that matches the request path and redirects the file URL to
 its extension-less form: `/privacy.html` → `/privacy`, `/contact.html` → `/contact`,
-`/app.html` → `/app`. It also normalises these routes with a permanent redirect; measured on the
-live origin on 2026-11-25, both `/index.html` and `/index/` answered `308` to `/`, so `/privacy/`,
-`/contact/` and `/app/` are expected to converge on the extension-less routes in the same way.
+`/app.html` → `/app`. Measured on the live origin on 2026-11-25, `/index.html` answered `308` to
+`/`; re-measured on 2026-11-28, `/privacy.html`, `/privacy/`, `/app/` and `/index.html` all answer
+`308` to their canonical extension-less form.
 
 A top-level `404.html` is the switch that matters. Per Cloudflare's serving documentation, Pages
 assumes a single-page application and falls back to the root document for unmatched paths only
@@ -88,26 +111,23 @@ is exactly what this build relies on: each route is a real document, and `app.ht
 the fallback. `robots.txt` still allows crawling and disallows only `/app`; unknown paths answer
 with the not-found document and HTTP 404, which is the correct signal for search engines.
 
-There is no `_redirects`, `_routes.json` or `_headers` file in either repository, so nothing
-overrides this mapping. Do not add a catch-all rewrite to `index.html`: it would serve the landing
+There is no `_redirects` or `_routes.json` file in either repository, so nothing overrides this
+mapping. A top-level `_headers` file exists for response headers only (Phase 1) and does not
+participate in routing. Do not add a catch-all rewrite to `index.html`: it would serve the landing
 document for `/privacy` and `/app` as well.
 
-This mapping is documented and simulated locally, not yet measured on the deployed origin; the
-current live release does not contain the documents. After the next authorized release, confirm:
-
-- `/`, `/privacy`, `/contact` return their own documents with the correct head;
-- `/privacy.html`, `/contact.html` and `/app.html` redirect to their extension-less forms;
-- `/app` returns `app.html` with `noindex,nofollow` and no canonical, and `/app/` normalises to `/app`;
-- an unknown path returns `404.html` with HTTP 404, `noindex,nofollow` and no canonical;
-- `/robots.txt` and `/sitemap.xml` still return the real files.
+The mapping is no longer simulated: on 2026-11-28 the live origin returned `200` for `/`,
+`/privacy`, `/contact` and `/app`, `404` for an unknown path, and the redirects listed above.
 
 ## Discovery files
 
 - `robots.txt` allows crawling, disallows `/app`, and declares
   `Sitemap: https://querymind.in/sitemap.xml`.
-- `sitemap.xml` lists exactly `/`, `/privacy` and `/contact` as absolute HTTPS URLs, with no
-  `lastmod` date and no `/app` entry. The canonical URLs and the sitemap entries are generated from
-  the same metadata module and are asserted equal by `tests/seo_metadata.test.ts`.
+- `sitemap.xml` lists exactly `/`, `/privacy` and `/contact` as absolute HTTPS URLs, with a
+  `lastmod` set to each page's last meaningful content change (2026-11-28 for `/`, 2026-11-25 for
+  `/privacy` and `/contact`), no `changefreq` or `priority` hints, and no `/app` entry. The
+  canonical URLs and the sitemap entries come from the same metadata module and are asserted equal
+  by `tests/seo_metadata.test.ts`; deployment timestamps are never used as content dates.
 
 ### robots.txt versus noindex
 
@@ -121,40 +141,46 @@ document carries no canonical that could compete with a real page.
 
 ## Search Console readiness
 
-Nothing below has been performed yet. The domain is not claimed to be indexed merely because a URL
-returns HTTP 200.
+Search Console ownership verification, sitemap submission and indexing requests were reported by
+the project owner in the project context. They have not been independently re-verified from this
+repository: no Search Console account access was used for this document.
 
-1. Verify ownership of `querymind.in` (DNS TXT record or the HTML file method in the site's static
-   assets; no verification token has been added to the source).
-2. Submit `https://querymind.in/sitemap.xml`.
-3. Inspect `https://querymind.in/` and confirm the Google-selected canonical is the apex URL.
-4. Inspect `/privacy` and `/contact`; confirm each renders and reports its own canonical.
-5. Review the indexing status of all three routes after the first crawl.
-6. Request indexing for the three public URLs after the deployment is live.
-7. Recheck the Pages indexing and crawl reports after a few days.
-8. Confirm `/app` does not appear in the index and that the sitemap reports no errors.
+Status as reported by the owner: domain ownership verified, sitemap submitted, homepage indexed,
+and indexing requested for the privacy and contact pages. The current live HTML and Googlebot's
+retrievable HTML both carry the reviewed metadata (verified 2026-11-28), so no source-side conflict
+remains. Google's index can lag a metadata release, and Google may rewrite a search-result title or
+snippet; a refresh of the search appearance is not guaranteed and must be confirmed in Search
+Console before it is described as complete.
+
+The URL to inspect is `https://querymind.in/` (then `/privacy` and `/contact`). Use "Test live URL"
+before "Request indexing" so the test reflects the deployed document rather than a cached one.
 
 ## What is not verified here
 
-- Search Console ownership, sitemap submission, Google-selected canonicals and indexing — no
-  account access was used.
+- Search Console ownership, sitemap submission, Google-selected canonicals, indexed HTML and
+  indexing outcomes — user-reported, not independently re-verified here.
 - Google's or LinkedIn's rendered previews of the social card — their caches are external.
-- Cloudflare Pages' clean-URL mapping, custom 404 precedence and HTTP status, and trailing-slash
-  redirects for the new documents on the live origin — documented and simulated locally, not yet
-  measured on Pages.
+- The effect of SEO Release 1 (H1, JSON-LD, sitemap dates) on Google's index or search appearance —
+  the release is implemented locally and not deployed.
 - The existing `www.querymind.in` DNS behaviour — out of scope for this release.
-- The workspace's R2/WASM path from a local origin (CORS correctly allows only `https://querymind.in`);
-  it is unchanged and still verified on the deployed origin.
+- Core Web Vitals field data — not measured here.
 
 ## Maintenance
 
 - Change public metadata in `src/services/siteMeta.ts`. The block in `index.html` must match
   `renderSeoBlock(LANDING_META)`; the SEO test fails if they diverge. The workspace and not-found
   heads come from `WORKSPACE_META` and `NOT_FOUND_META` in the same module.
+- Edit `LANDING_STRUCTURED_DATA` in the same module for structured-data changes, and re-run the
+  build so `index.html` regenerates. Do not add offers, prices, ratings or reviews without a
+  separately reviewed, factual basis.
 - Regenerate the social card from `docs/og-card.html` after changing the design, and keep the
-  dimensions at 1200 × 630.
+  dimensions at 1200 × 630. Publish a new filename and update `SOCIAL_IMAGE_PATH` if the card
+  changes, because the current URL is cached by intermediaries.
 - Update `robots.txt` or `sitemap.xml` whenever the public route set changes, and keep the sitemap
-  in sync with `PUBLIC_PAGE_META`. Keep `app.html` in the build: with `404.html` present, Pages no
-  longer falls back to `index.html` for `/app`.
+  in sync with `PUBLIC_PAGE_META`. Set `lastmod` only to the page's last meaningful content date,
+  never to a deployment timestamp; the SEO test pins the current dates. Keep `app.html` in the
+  build: with `404.html` present, Pages no longer falls back to `index.html` for `/app`.
+- `public/_headers` is the Phase 1 response-header policy and is mirrored byte-for-byte into the
+  production repository. Do not edit it as part of SEO work.
 - Re-run `npx tsc --noEmit && npm test && npm run build`; the build now fails if the head markers or
   the empty root are missing from the Vite template.
